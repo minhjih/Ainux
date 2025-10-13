@@ -68,6 +68,11 @@ sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64 --output ~/ainu
 > 빌드가 중단되지 않고 자동으로 건너뜁니다. GPU가 없는 노트북이나 ARM 포트 미러에서도
 > 안심하고 ISO를 생성할 수 있습니다.
 
+> 🪄 **라이브 부팅 보조 패키지:** 일부 지역 미러(특히 ARM 전용 ports 미러)는 `lupin-casper`
+> 패키지를 제공하지 않습니다. `build.sh`는 이 패키지를 옵션으로 간주하여 존재할 때만 설치를
+> 시도하며, 찾을 수 없으면 경고를 남기고 계속 진행합니다. `lupin-casper`가 필요한 환경이라면
+> 해당 패키지를 제공하는 미러를 선택하거나 ISO 부팅 후 수동으로 설치하세요.
+
 > 🔐 **가상 머신에서의 iptables 경고:** 일부 하이퍼바이저나 경량 커널은 `iptables`
 > 백엔드를 제공하지 않아 `iptables-persistent` 패키지가 설정 단계에서 경고 창을
 > 띄우기도 합니다. 지금은 이 패키지를 `?iptables-persistent`로 표시하여 선택적 설치로

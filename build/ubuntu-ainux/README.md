@@ -151,6 +151,9 @@ sudo dd if=~/ainux-jammy.iso of=/dev/sdX bs=4M status=progress && sync
   예를 들어 기본 구성에서는 `?iptables-persistent`로 표시하여 netfilter가 비활성화된
   VM에서도 빌드가 중단되지 않도록 했습니다. 방화벽 상태를 유지하고 싶다면 `?`를 제거하거나
   ISO 부팅 후 수동으로 패키지를 설치하세요.
+  라이브 부팅 단계에서 사용하는 `lupin-casper` 패키지도 ports 계열 미러에는 존재하지 않는
+  경우가 많아, 스크립트가 자동으로 옵션 처리하고 있습니다. 패키지를 반드시 포함해야 한다면
+  제공하는 미러를 사용하거나 ISO 생성 이후 수동으로 추가하세요.
 * **Post-Install Logic:** Modify `config/chroot_setup.sh` to run extra commands
   inside the chroot. For complex flows consider invoking Ansible playbooks.
 * **Hardware Blueprints:** Place YAML or JSON templates inside `overlay/` or
