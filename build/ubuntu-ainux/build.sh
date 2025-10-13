@@ -37,7 +37,9 @@ echo "[log] Streaming build output to $LOG_FILE"
 
 RELEASE="jammy"
 ARCH="amd64"
-MIRROR="http://archive.ubuntu.com/ubuntu"
+DEFAULT_ARCHIVE_MIRROR="http://archive.ubuntu.com/ubuntu"
+DEFAULT_PORTS_MIRROR="http://ports.ubuntu.com/ubuntu-ports"
+MIRROR=""
 ISO_LABEL="AINUX"
 WORK_DIR="$SCRIPT_DIR/work"
 ROOTFS_DIR="$WORK_DIR/chroot"
@@ -69,7 +71,7 @@ Usage: $0 [options]
 Options:
   -r, --release <ubuntu release>   Ubuntu codename to base on (default: $RELEASE)
   -a, --arch <architecture>        Target architecture (default: $ARCH)
-  -m, --mirror <url>               Ubuntu mirror URL (default: $MIRROR)
+  -m, --mirror <url>               Ubuntu mirror URL (default: auto)
   -l, --label <label>              ISO label (default: $ISO_LABEL)
   -o, --output <path>              Output ISO path (default: ./ainux-<release>-<arch>.iso)
   -k, --keep-work                  Keep working directories after completion
@@ -127,6 +129,18 @@ normalize_arch() {
       echo "i386" ;;
     *)
       echo "$value" ;;
+  esac
+}
+
+default_mirror_for_arch() {
+  local target_arch="$(normalize_arch "$1")"
+  case "$target_arch" in
+    arm64|armhf|armel)
+      echo "$DEFAULT_PORTS_MIRROR"
+      ;;
+    *)
+      echo "$DEFAULT_ARCHIVE_MIRROR"
+      ;;
   esac
 }
 
@@ -248,6 +262,24 @@ run_foreign_second_stage() {
     exit 1
   fi
 
+  if [[ ! -x "$ROOTFS_DIR/usr/bin/apt-get" || ! -x "$ROOTFS_DIR/usr/bin/dpkg" ]]; then
+    echo "[error] Foreign second stage completed without installing core apt/dpkg tools." >&2
+    echo "[error] 이는 대개 QEMU 에뮬레이션 중단(예: SIGSEGV)이나 누락된 의존성으로 인해 발생합니다." >&2
+    if [[ -f "$ROOTFS_DIR/debootstrap/debootstrap.log" ]]; then
+      echo "[hint] Inspect $ROOTFS_DIR/debootstrap/debootstrap.log 또는 $WORK_DIR/debootstrap.log for details." >&2
+    fi
+    echo "[hint] 동일 아키텍처 호스트에서 빌드하거나 qemu-user-static/ binfmt 설정을 다시 확인해 주세요." >&2
+    KEEP_WORK=1
+    if [[ $mounted -eq 1 ]]; then
+      sudo umount -lf "$ROOTFS_DIR/dev/pts" || true
+      sudo umount -lf "$ROOTFS_DIR/dev" || true
+      sudo umount -lf "$ROOTFS_DIR/proc" || true
+      sudo umount -lf "$ROOTFS_DIR/sys" || true
+      sudo umount -lf "$ROOTFS_DIR/run" || true
+    fi
+    exit 1
+  fi
+
   if [[ $mounted -eq 1 ]]; then
     sudo umount -lf "$ROOTFS_DIR/dev/pts" || true
     sudo umount -lf "$ROOTFS_DIR/dev" || true
@@ -288,8 +320,15 @@ copy_overlay() {
 configure_apt() {
   local sources_file="$CONFIG_DIR/sources.list"
   if [[ -f "$sources_file" ]]; then
-    echo "[apt] Copying custom sources.list"
-    sudo cp "$sources_file" "$ROOTFS_DIR/etc/apt/sources.list"
+    echo "[apt] Rendering sources.list for $ARCH using mirror $MIRROR"
+    if grep -q "@UBUNTU_MIRROR@" "$sources_file"; then
+      local escaped_mirror
+      escaped_mirror="$(printf '%s\n' "$MIRROR" | sed 's/[&\\/]/\\&/g')"
+      sudo sed "s|@UBUNTU_MIRROR@|$escaped_mirror|g" "$sources_file" | \
+        sudo tee "$ROOTFS_DIR/etc/apt/sources.list" >/dev/null
+    else
+      sudo cp "$sources_file" "$ROOTFS_DIR/etc/apt/sources.list"
+    fi
   fi
 }
 
@@ -534,6 +573,13 @@ main() {
     ARCH="$normalized_target"
   else
     ARCH="$normalized_target"
+  fi
+
+  if [[ -z "$MIRROR" ]]; then
+    MIRROR="$(default_mirror_for_arch "$ARCH")"
+    echo "[mirror] Using default mirror for $ARCH: $MIRROR"
+  else
+    echo "[mirror] Using custom mirror: $MIRROR"
   fi
 
   determine_efi_target

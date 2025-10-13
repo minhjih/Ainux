@@ -53,6 +53,17 @@ sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64 --output ~/ainu
 > appropriate QEMU static binary. Without those packages debootstrap will fail
 > with errors such as `Failure trying to run: chroot ... /bin/true`.
 
+> 🌐 **arm64 미러 기본값:** `arm64` (또는 기타 ARM 타깃)으로 빌드하면 스크립트가 자동으로
+> `http://ports.ubuntu.com/ubuntu-ports` 미러를 선택합니다. 아시아(특히 한국) 지역에서는
+> 이 포트 미러가 가장 안정적으로 패키지를 내려받으므로 별도 설정 없이도 빠르게 빌드할 수
+> 있습니다. 다른 거울을 사용하려면 `--mirror` 옵션으로 URL을 명시하세요.
+
+> 🚧 **QEMU 세그멘테이션 폴트 대응:** 교차 아키텍처 빌드에서 `QEMU internal SIGSEGV`
+> 등의 메시지가 뜬 뒤 `apt-get: No such file or directory`가 이어진다면, 두 번째
+> debootstrap 단계가 정상적으로 종료되지 않은 상태입니다. 스크립트가 자동으로
+> 중단되며 `work/debootstrap.log`에 로그를 남기니 QEMU/ binfmt 설정을 재확인하거나
+> 동일 아키텍처 호스트에서 다시 시도하세요.
+
 > 🛠️ **패키지 설정 실패 대응:** `Failure while configuring required packages` 같은
 > 메시지가 출력되면 debootstrap 두 번째 단계에서 기본 패키지 설정이 멈춘
 > 것입니다. 스크립트가 `/proc`, `/sys`, `/dev` 등을 자동 마운트하고 실패 시

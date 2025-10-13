@@ -58,12 +58,25 @@ and then triggers the second stage inside the chroot. Skipping these packages
 leads to debootstrap errors such as `Failure trying to run: chroot ... /bin/true`
 because the host kernel cannot execute the target architecture binaries.
 
+> 🌐 **ARM 타깃 기본 미러:** `--arch arm64`(또는 `armhf`/`armel`)로 빌드하면 스크립트가
+> `http://ports.ubuntu.com/ubuntu-ports` 미러를 자동 선택합니다. 해당 미러는
+> 아시아, 특히 한국에서 가장 안정적으로 ARM 패키지를 제공하므로 추가 설정 없이도
+> 빠르게 이미지를 구성할 수 있습니다. 필요 시 `--mirror` 옵션으로 원하는 URL을
+> 지정하면 즉시 덮어쓸 수 있습니다.
+
 During a foreign build the script keeps the QEMU helper inside the chroot until
 all package configuration tasks finish, preventing confusing errors like
 ``/usr/bin/apt-get: No such file or directory`` that arise when the host tries
 to execute target-architecture binaries without an interpreter. Custom chroot
 scripts should leave the helper in place; the builder removes it automatically
 right before the filesystem is packed into the ISO.
+
+If QEMU crashes (for example `QEMU internal SIGSEGV`) during the second stage,
+debootstrap may stop before `apt-get`/`dpkg` are installed. The builder now
+detects this condition, aborts immediately, and preserves
+`work/debootstrap.log` so you can review the failing package. In that case,
+double-check the `qemu-user-static` version and binfmt registration or retry on
+a host that matches the target architecture.
 
 If debootstrap reports `Failure while configuring required packages`, the
 second stage aborted while configuring the base system. The build script now
@@ -83,7 +96,7 @@ build/ubuntu-ainux/
 ├── config/
 │   ├── packages.txt       # Extra packages installed inside the live system
 │   ├── chroot_setup.sh    # Additional configuration executed in the chroot
-│   ├── sources.list       # Custom apt mirror definition
+│   ├── sources.list       # Custom apt mirror definition (uses @UBUNTU_MIRROR@ placeholder)
 │   └── (optional) grub.cfg for further boot menu customization
 └── overlay/               # Drop-in files copied into the root filesystem
 ```
