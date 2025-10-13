@@ -109,14 +109,29 @@ cleanup() {
 }
 
 check_dependencies() {
-  local deps=(debootstrap mksquashfs xorriso isolinux mtools rsync dosfstools)
-  for dep in "${deps[@]}"; do
+  local cmd_deps=(debootstrap mksquashfs xorriso rsync mkfs.vfat)
+  local missing=()
+  for dep in "${cmd_deps[@]}"; do
     if ! command -v "$dep" >/dev/null 2>&1; then
-      echo "Missing dependency: $dep" >&2
-      echo "Install required packages: sudo apt-get install -y debootstrap squashfs-tools xorriso isolinux mtools dosfstools rsync" >&2
-      exit 1
+      missing+=("$dep")
     fi
   done
+
+  local isolinux_bin="/usr/lib/ISOLINUX/isolinux.bin"
+  local ldlinux_c32="/usr/lib/syslinux/modules/bios/ldlinux.c32"
+  if [[ ! -f "$isolinux_bin" ]]; then
+    missing+=("isolinux (file $isolinux_bin)")
+  fi
+  if [[ ! -f "$ldlinux_c32" ]]; then
+    missing+=("syslinux modules (file $ldlinux_c32)")
+  fi
+
+  if (( ${#missing[@]} )); then
+    echo "[error] Missing build dependencies:" >&2
+    printf '  - %s\n' "${missing[@]}" >&2
+    echo "[hint] Install required packages: sudo apt-get install -y debootstrap squashfs-tools xorriso isolinux mtools dosfstools rsync" >&2
+    exit 1
+  fi
 }
 
 prepare_directories() {
