@@ -18,13 +18,28 @@ that demonstrates those ideas.
 
 ## Quick Start
 
-To build the prototype ISO:
+To build the prototype ISO **use a dedicated build host or disposable VM**.
+The pipeline never "layers" on top of an existing Ubuntu install: it only
+assembles a brand-new bootable ISO image inside the repository's `work/`
+directory. Running the tooling on a production server may monopolise CPU, RAM,
+and disk I/O while chroots and SquashFS images are assembled. The script now
+requires an explicit opt-in via `AINUX_ALLOW_BUILD=1` so accidental executions
+are blocked by default. If the process appears to stop immediately, double-
+check that the environment variable was exported on the same command line.
+
+To continue once you are in a safe environment:
 
 ```bash
 git clone https://github.com/<your-org>/Ainux.git
 cd Ainux/build/ubuntu-ainux
-sudo ./build.sh --release jammy --arch amd64 --output ~/ainux-jammy.iso
+sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64 --output ~/ainux-jammy.iso
 ```
+
+> ℹ️ **Troubleshooting:** The safety gate aborts early unless
+> `AINUX_ALLOW_BUILD=1` is present. When set correctly you will see progress
+> messages such as `[bootstrap]`, `[overlay]`, and `[live]`. If the build later
+> halts, review `/tmp/ainux-build.log` (created automatically) for the failing
+> command or rerun with `--keep-work` to inspect the generated chroot.
 
 Refer to `build/ubuntu-ainux/README.md` for prerequisites and customization
 options, including the new scheduling/packet-management blueprints seeded into
@@ -32,31 +47,37 @@ the live image.
 
 ## Configuring GPT access
 
-The repository ships with a reusable CLI (`ainux-ai-chat`) and Python module
-(`ainux_ai`) that connect to GPT-style APIs. Configure a provider once and both
-the live ISO and host tooling can reuse the credentials:
+The repository ships with a reusable CLI (`ainux-client`, with a backwards-
+compatible `ainux-ai-chat` alias) and Python module (`ainux_ai`) that connect to
+GPT-style APIs. Configure a provider once and both the live ISO and host
+tooling can reuse the credentials:
 
 ```bash
 # Configure an OpenAI account and make it the default provider
-python -m ainux_ai configure --api-key sk-... --default
+./ainux-client configure --api-key sk-... --default
 
 # Update or rotate the API key later without changing other settings
-python -m ainux_ai set-key --api-key sk-new-...
+./ainux-client set-key --api-key sk-new-...
 
 # Send a quick prompt
-python -m ainux_ai chat --message "Ainux에 대해 한 문장으로 요약해줘"
+./ainux-client chat --message "Ainux에 대해 한 문장으로 요약해줘"
 
 # Use environment variables for ephemeral sessions
-AINUX_GPT_API_KEY=sk-... AINUX_GPT_MODEL=gpt-4o-mini python -m ainux_ai chat --message "hello"
+AINUX_GPT_API_KEY=sk-... AINUX_GPT_MODEL=gpt-4o-mini ./ainux-client chat --message "hello"
 ```
 
-Inside the live ISO the `ainux` user can run `ainux-ai-chat chat --interactive`
+리포지토리 루트에서 실행하면 `./ainux-client` 스크립트가 바로 동작하며,
+원한다면 `$PATH`에 추가하거나 심볼릭 링크를 만들어 시스템 전역에서
+동일한 명령으로 사용할 수 있습니다. 기존 `python -m ainux_ai` 호출 방식도
+호환성을 위해 그대로 유지됩니다.
+
+Inside the live ISO the `ainux` user can run `ainux-client chat --interactive`
 to hold multi-turn conversations, switch between multiple saved providers, and
-log transcripts for auditing.
+log transcripts for auditing (the legacy `ainux-ai-chat` alias still works).
 
 ## 자연어 오케스트레이션 사용하기
 
-`ainux-ai-chat orchestrate` 서브커맨드는 자연어 요청을 인텐트 → 실행 계획 →
+`ainux-client orchestrate` 서브커맨드는 자연어 요청을 인텐트 → 실행 계획 →
 안전성 검토 → (선택적) 실행 단계로 이어지는 파이프라인에 연결합니다. GPT
 제공자를 설정하면 모델이 계획을 도와주고, 제공자가 없거나 `--offline`
 플래그를 사용하면 휴리스틱 모드로 동작합니다.

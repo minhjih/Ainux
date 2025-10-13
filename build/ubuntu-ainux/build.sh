@@ -1,8 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${AINUX_ALLOW_BUILD:-}" != "1" ]]; then
+  cat <<'EOWARN'
+[safety] 이 스크립트는 Ainux 전용 부팅 ISO 이미지만 생성하며, 현재 호스트 OS를 수정하지 않습니다.
+[safety] 다만, debootstrap/SquashFS 작업이 시스템 리소스를 크게 사용하므로 안전장치가 기본 활성화되어 있습니다.
+[safety] 빌드를 계속하려면 충분한 리소스를 갖춘 전용 머신 또는 임시 VM에서 AINUX_ALLOW_BUILD=1 환경 변수를 명시적으로 설정하세요.
+[safety] 예시: sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64 --output ~/ainux-jammy.iso
+EOWARN
+  exit 2
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+LOG_FILE="${AINUX_BUILD_LOG:-/tmp/ainux-build.log}"
+mkdir -p "$(dirname "$LOG_FILE")"
+exec > >(tee -a "$LOG_FILE") 2>&1
+echo "[log] Streaming build output to $LOG_FILE"
 
 # Ainux Ubuntu remix build script.
 # This script bootstraps an Ubuntu-based live ISO customised with the

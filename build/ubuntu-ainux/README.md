@@ -2,9 +2,11 @@
 
 This directory contains automation to assemble an Ubuntu-based live ISO that
 bootstraps the AI-native workflows documented in `docs/ai_friendly_os_design.md`.
-The scripts rely on `debootstrap` and the standard Ubuntu live ISO toolchain,
-allowing you to customize the distribution while maintaining compatibility with
-upstream updates.
+The process **never modifies the host operating system**; all work happens in a
+temporary `work/` tree and the result is a standalone ISO image you can flash or
+boot in other environments. The scripts rely on `debootstrap` and the standard
+Ubuntu live ISO toolchain, allowing you to customize the distribution while
+maintaining compatibility with upstream updates.
 
 ## Features
 
@@ -59,10 +61,21 @@ other files that should be injected into the root filesystem verbatim.
 
 ## Building the ISO
 
+> ⚠️ **리소스 경고:** debootstrap, SquashFS 압축, ISO 패키징 과정은 수 기가바이트의
+> 디스크 공간과 높은 CPU/메모리 사용률을 요구합니다. 운영 중인 서버에서는
+> 빌드를 실행하지 말고, 전용 빌드 박스나 임시 VM을 사용하세요. 실수로 실행하는
+> 일을 막기 위해 `build.sh`는 기본적으로 종료하며, 안전하다고 판단되는 환경에서
+> `AINUX_ALLOW_BUILD=1`을 지정해야만 진행됩니다.
+
 ```bash
 cd build/ubuntu-ainux
-sudo ./build.sh --release jammy --arch amd64 --output ~/ainux-jammy.iso
+sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64 --output ~/ainux-jammy.iso
 ```
+
+The script streams all output to `/tmp/ainux-build.log` (override with
+`AINUX_BUILD_LOG`) so you can review progress or diagnose failures if the run is
+interrupted. Expect status lines such as `[bootstrap]`, `[overlay]`, and
+`[squashfs]` as each phase completes.
 
 The script creates a `work/` directory containing the debootstrap chroot and ISO
 staging tree. By default the directory is removed on success. Pass `--keep-work`
