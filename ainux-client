@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+"""Ainux command-line client entry point."""
+from ainux_ai.cli import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())
