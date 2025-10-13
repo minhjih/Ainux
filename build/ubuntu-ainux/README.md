@@ -58,6 +58,13 @@ and then triggers the second stage inside the chroot. Skipping these packages
 leads to debootstrap errors such as `Failure trying to run: chroot ... /bin/true`
 because the host kernel cannot execute the target architecture binaries.
 
+During a foreign build the script keeps the QEMU helper inside the chroot until
+all package configuration tasks finish, preventing confusing errors like
+``/usr/bin/apt-get: No such file or directory`` that arise when the host tries
+to execute target-architecture binaries without an interpreter. Custom chroot
+scripts should leave the helper in place; the builder removes it automatically
+right before the filesystem is packed into the ISO.
+
 If debootstrap reports `Failure while configuring required packages`, the
 second stage aborted while configuring the base system. The build script now
 bind-mounts `/proc`, `/sys`, and `/dev` automatically and preserves the full

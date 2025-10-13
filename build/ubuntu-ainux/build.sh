@@ -56,6 +56,7 @@ EFI_PACKAGE_NAME=""
 HOST_ARCH=""
 USE_FOREIGN_STAGE=0
 QEMU_STATIC_BIN=""
+FOREIGN_QEMU_BASENAME=""
 
 PACKAGES_FILE="$CONFIG_DIR/packages.txt"
 CHROOT_SCRIPT="$CONFIG_DIR/chroot_setup.sh"
@@ -101,6 +102,7 @@ cleanup() {
   if [[ ${CHROOT_MOUNTED:-0} -eq 1 ]]; then
     cleanup_chroot_env
   fi
+  remove_foreign_qemu_helper || true
   if [[ -d "$EFI_STAGING_DIR" && ${KEEP_WORK:-0} -eq 0 ]]; then
     sudo rm -rf "$EFI_STAGING_DIR"
   fi
@@ -200,6 +202,17 @@ prepare_directories() {
   mkdir -p "$ROOTFS_DIR" "$ISO_DIR" "$EFI_STAGING_DIR"
 }
 
+remove_foreign_qemu_helper() {
+  if [[ -n "$FOREIGN_QEMU_BASENAME" ]]; then
+    local helper_path="$ROOTFS_DIR/usr/bin/$FOREIGN_QEMU_BASENAME"
+    if [[ -e "$helper_path" ]]; then
+      echo "[bootstrap] Removing QEMU helper from target rootfs"
+      sudo rm -f "$helper_path"
+    fi
+    FOREIGN_QEMU_BASENAME=""
+  fi
+}
+
 run_foreign_second_stage() {
   local mounted=0
   echo "[bootstrap] Preparing mounts for foreign second stage"
@@ -258,8 +271,8 @@ bootstrap_base() {
     local qemu_basename
     qemu_basename="$(basename "$QEMU_STATIC_BIN")"
     sudo cp "$QEMU_STATIC_BIN" "$ROOTFS_DIR/usr/bin/"
+    FOREIGN_QEMU_BASENAME="$qemu_basename"
     run_foreign_second_stage
-    sudo rm -f "$ROOTFS_DIR/usr/bin/$qemu_basename"
   else
     sudo debootstrap --arch="$ARCH" "$RELEASE" "$ROOTFS_DIR" "$MIRROR"
   fi
@@ -535,6 +548,7 @@ main() {
   run_chroot_script
   generate_efi_bootloader
   cleanup_chroot_env
+  remove_foreign_qemu_helper
   copy_overlay
   prepare_iso_structure
   stage_bootloader_files
