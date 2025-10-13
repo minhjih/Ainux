@@ -37,8 +37,13 @@ packages installed:
 ```bash
 sudo apt-get update
 sudo apt-get install -y debootstrap squashfs-tools xorriso isolinux \
-  grub-pc-bin grub-efi-amd64-bin mtools rsync
+  mtools dosfstools rsync
 ```
+
+The build script now generates the GRUB EFI binary from inside the Ubuntu
+chroot, so you do **not** need to install additional GRUB packages on the host
+machine. As long as the standard ISO tooling above is available, the workflow
+produces a hybrid BIOS/UEFI image automatically.
 
 You must execute the build as `root` (or via `sudo`) because debootstrap and the
 ISO generation steps require elevated privileges.

@@ -27,8 +27,7 @@ echo "[log] Streaming build output to $LOG_FILE"
 
 # Requirements (on the host machine):
 #   sudo/root privileges
-#   debootstrap, squashfs-tools, xorriso, isolinux, grub-pc-bin,
-#   grub-efi-amd64-bin, mtools
+#   debootstrap, squashfs-tools, xorriso, isolinux, mtools, dosfstools
 #   approx. 10GB free disk space
 #   network access to Ubuntu mirrors
 #
@@ -47,7 +46,12 @@ CONFIG_DIR="$SCRIPT_DIR/config"
 OVERLAY_DIR="$SCRIPT_DIR/overlay"
 AI_CLIENT_DIR="$REPO_ROOT/ainux_ai"
 BRANDING_DIR="$REPO_ROOT/folder"
+EFI_STAGING_DIR="$WORK_DIR/efi"
 CHROOT_MOUNTED=0
+
+EFI_GRUB_TARGET=""
+EFI_BOOT_FILENAME=""
+EFI_PACKAGE_NAME=""
 
 PACKAGES_FILE="$CONFIG_DIR/packages.txt"
 CHROOT_SCRIPT="$CONFIG_DIR/chroot_setup.sh"
@@ -68,9 +72,33 @@ Options:
 USAGE
 }
 
+determine_efi_target() {
+  case "$ARCH" in
+    amd64|x86_64)
+      EFI_GRUB_TARGET="x86_64-efi"
+      EFI_BOOT_FILENAME="BOOTX64.EFI"
+      EFI_PACKAGE_NAME="grub-efi-amd64-bin"
+      ;;
+    arm64|aarch64)
+      EFI_GRUB_TARGET="arm64-efi"
+      EFI_BOOT_FILENAME="BOOTAA64.EFI"
+      EFI_PACKAGE_NAME="grub-efi-arm64-bin"
+      ;;
+    *)
+      echo "[warn] Unsupported architecture for EFI generation: $ARCH. EFI boot files will not be produced." >&2
+      EFI_GRUB_TARGET=""
+      EFI_BOOT_FILENAME=""
+      EFI_PACKAGE_NAME=""
+      ;;
+  esac
+}
+
 cleanup() {
   if [[ ${CHROOT_MOUNTED:-0} -eq 1 ]]; then
     cleanup_chroot_env
+  fi
+  if [[ -d "$EFI_STAGING_DIR" && ${KEEP_WORK:-0} -eq 0 ]]; then
+    sudo rm -rf "$EFI_STAGING_DIR"
   fi
   if [[ ${KEEP_WORK:-0} -eq 0 ]]; then
     echo "[cleanup] Removing work directory: $WORK_DIR"
@@ -81,18 +109,18 @@ cleanup() {
 }
 
 check_dependencies() {
-  local deps=(debootstrap mksquashfs xorriso isolinux grub-mkstandalone grub-mkrescue mtools rsync)
+  local deps=(debootstrap mksquashfs xorriso isolinux mtools rsync dosfstools)
   for dep in "${deps[@]}"; do
     if ! command -v "$dep" >/dev/null 2>&1; then
       echo "Missing dependency: $dep" >&2
-      echo "Install required packages: sudo apt-get install -y debootstrap squashfs-tools xorriso isolinux grub-pc-bin grub-efi-amd64-bin mtools rsync" >&2
+      echo "Install required packages: sudo apt-get install -y debootstrap squashfs-tools xorriso isolinux mtools dosfstools rsync" >&2
       exit 1
     fi
   done
 }
 
 prepare_directories() {
-  mkdir -p "$ROOTFS_DIR" "$ISO_DIR"
+  mkdir -p "$ROOTFS_DIR" "$ISO_DIR" "$EFI_STAGING_DIR"
 }
 
 bootstrap_base() {
@@ -129,6 +157,29 @@ run_chroot_script() {
     sudo chroot "$ROOTFS_DIR" /usr/bin/env bash -c "/tmp/chroot_setup.sh"
     sudo rm -f "$ROOTFS_DIR/tmp/chroot_setup.sh"
   fi
+}
+
+generate_efi_bootloader() {
+  if [[ -z "$EFI_GRUB_TARGET" || -z "$EFI_BOOT_FILENAME" ]]; then
+    echo "[efi] EFI generation skipped for architecture $ARCH"
+    return
+  fi
+
+  echo "[efi] Generating GRUB EFI binary inside chroot"
+  local tmp_cfg="$ROOTFS_DIR/tmp/iso-grub.cfg"
+  sudo tee "$tmp_cfg" >/dev/null <<'GRUB'
+set default=0
+set timeout=5
+
+menuentry "Ainux Live" {
+    search --file --set=root /casper/vmlinuz
+    linux /casper/vmlinuz boot=casper quiet splash ---
+    initrd /casper/initrd
+}
+GRUB
+  sudo chroot "$ROOTFS_DIR" grub-mkstandalone -O "$EFI_GRUB_TARGET" -o /tmp/"$EFI_BOOT_FILENAME" "boot/grub/grub.cfg=/tmp/iso-grub.cfg"
+  sudo cp "$ROOTFS_DIR/tmp/$EFI_BOOT_FILENAME" "$EFI_STAGING_DIR/$EFI_BOOT_FILENAME"
+  sudo rm -f "$ROOTFS_DIR/tmp/$EFI_BOOT_FILENAME" "$tmp_cfg"
 }
 
 prepare_chroot_env() {
@@ -175,7 +226,14 @@ seed_configuration_files() {
 configure_live_boot() {
   echo "[live] Setting up live boot configuration"
   sudo chroot "$ROOTFS_DIR" apt-get update
-  sudo chroot "$ROOTFS_DIR" apt-get install -y --no-install-recommends linux-generic casper lupin-casper discover laptop-detect os-prober network-manager
+  local pkg_args=(linux-generic casper lupin-casper discover laptop-detect os-prober network-manager)
+  if [[ "$ARCH" == "amd64" || "$ARCH" == "x86_64" ]]; then
+    pkg_args+=(grub-pc-bin)
+  fi
+  if [[ -n "$EFI_PACKAGE_NAME" ]]; then
+    pkg_args+=("$EFI_PACKAGE_NAME")
+  fi
+  sudo chroot "$ROOTFS_DIR" apt-get install -y --no-install-recommends "${pkg_args[@]}"
   sudo chroot "$ROOTFS_DIR" apt-get clean
   sudo rm -f "$ROOTFS_DIR/etc/machine-id"
   sudo touch "$ROOTFS_DIR/etc/machine-id"
@@ -219,6 +277,41 @@ LABEL live
 ISOCFG
 }
 
+stage_bootloader_files() {
+  echo "[bootloader] Copying isolinux and GRUB assets"
+  local isolinux_bin="/usr/lib/ISOLINUX/isolinux.bin"
+  local ldlinux_c32="/usr/lib/syslinux/modules/bios/ldlinux.c32"
+  if [[ ! -f "$isolinux_bin" || ! -f "$ldlinux_c32" ]]; then
+    echo "[error] isolinux assets not found. Ensure the 'isolinux' package is installed." >&2
+    exit 1
+  fi
+  sudo cp "$isolinux_bin" "$ISO_DIR/isolinux/"
+  sudo cp "$ldlinux_c32" "$ISO_DIR/isolinux/"
+  if [[ -n "$EFI_BOOT_FILENAME" && -f "$EFI_STAGING_DIR/$EFI_BOOT_FILENAME" ]]; then
+    sudo mkdir -p "$ISO_DIR/EFI/BOOT"
+    sudo cp "$EFI_STAGING_DIR/$EFI_BOOT_FILENAME" "$ISO_DIR/EFI/BOOT/$EFI_BOOT_FILENAME"
+  fi
+}
+
+create_efi_image() {
+  if [[ -z "$EFI_BOOT_FILENAME" || ! -f "$ISO_DIR/EFI/BOOT/$EFI_BOOT_FILENAME" ]]; then
+    echo "[efi] Skipping EFI image generation (EFI binary missing)"
+    return
+  fi
+
+  echo "[efi] Creating EFI system partition image"
+  local efi_img="$ISO_DIR/efi.img"
+  sudo dd if=/dev/zero of="$efi_img" bs=1M count=20 status=none
+  sudo mkfs.vfat "$efi_img" >/dev/null
+  local mnt_dir
+  mnt_dir="$(mktemp -d)"
+  sudo mount -o loop "$efi_img" "$mnt_dir"
+  sudo mkdir -p "$mnt_dir/EFI/BOOT"
+  sudo cp "$ISO_DIR/EFI/BOOT/$EFI_BOOT_FILENAME" "$mnt_dir/EFI/BOOT/$EFI_BOOT_FILENAME"
+  sudo umount "$mnt_dir"
+  rmdir "$mnt_dir"
+}
+
 create_manifest() {
   echo "[manifest] Generating package manifest"
   sudo chroot "$ROOTFS_DIR" dpkg-query -W --showformat='${Package} ${Version}\n' | sudo tee "$ISO_DIR/casper/filesystem.manifest" >/dev/null
@@ -234,7 +327,22 @@ create_md5sum() {
 assemble_iso() {
   local output_iso="${OUTPUT_PATH:-$(pwd)/ainux-$RELEASE-$ARCH.iso}"
   echo "[iso] Building ISO at $output_iso"
-  sudo grub-mkrescue -o "$output_iso" "$ISO_DIR" -- -volid "$ISO_LABEL"
+  local isohdpfx="/usr/lib/ISOLINUX/isohdpfx.bin"
+  local isohybrid_args=()
+  if [[ -f "$isohdpfx" ]]; then
+    isohybrid_args=(-isohybrid-mbr "$isohdpfx" -isohybrid-gpt-basdat)
+  fi
+  local xorriso_cmd=("sudo" "xorriso" -as mkisofs
+    -r -V "$ISO_LABEL" -J -l
+    -b isolinux/isolinux.bin
+    -c isolinux/boot.cat
+    -no-emul-boot -boot-load-size 4 -boot-info-table
+    -eltorito-alt-boot -e efi.img -no-emul-boot)
+  if (( ${#isohybrid_args[@]} )); then
+    xorriso_cmd+=(${isohybrid_args[@]})
+  fi
+  xorriso_cmd+=( -o "$output_iso" "$ISO_DIR" )
+  "${xorriso_cmd[@]}"
   echo "[iso] ISO created: $output_iso"
 }
 
@@ -268,6 +376,7 @@ main() {
     esac
   done
 
+  determine_efi_target
   check_dependencies
   prepare_directories
   bootstrap_base
@@ -277,11 +386,14 @@ main() {
   install_packages
   configure_live_boot
   run_chroot_script
+  generate_efi_bootloader
   cleanup_chroot_env
   copy_overlay
   prepare_iso_structure
+  stage_bootloader_files
   create_manifest
   create_squashfs
+  create_efi_image
   create_md5sum
   assemble_iso
 }
