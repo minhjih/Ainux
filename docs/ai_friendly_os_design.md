@@ -6,6 +6,16 @@ requests can drive full-system automation. Users describe intentions, and the
 OS orchestrates the right applications, services, and workflows to complete
 those tasks autonomously while keeping the user in control.
 
+> **Implementation status:** The current prototype focuses on infrastructure
+> automation scaffolding and now ships with a configurable GPT connector
+> (`ainux-ai-chat`), a baseline intent→plan→execution orchestrator, the context
+> fabric module for 파일/설정/이벤트 그래프화, 지능형 하드웨어 자동화
+> (`ainux_ai.hardware`) that catalogs devices/드라이버/펌웨어와 텔레메트리를
+> 관리하며, 그리고 자연어·플랜·실행 로그를 한 화면에 묶어 주는 브라우저
+> UI(`python -m ainux_ai ui`). Richer conversational planners, deep contextual
+> reasoning, and the immersive UI capabilities described below remain in
+> development and are not yet fully integrated into the Ubuntu remix.
+
 ## Design Principles
 - **User-first autonomy**: The AI should execute multi-step tasks on the
   user's behalf but surface plans, confirmations, and outcomes at every
@@ -32,6 +42,9 @@ those tasks autonomously while keeping the user in control.
      states, and recent interactions.
    - Event bus streams updates (file changes, notifications, sensor data) to
      keep AI models synchronized with reality.
+   - **현재 구현:** `ainux_ai.context` 패키지가 `ContextFabric` 클래스를 제공하여
+     지식 그래프/이벤트 버스를 저장하고, `ainux-ai-chat context` CLI를 통해 파일·
+     설정·이벤트를 기록하거나 스냅샷을 추출할 수 있다.
 3. **Action Execution Engine**
    - Library of capability adapters that wrap OS APIs, CLI tools, and app
      automations.
@@ -39,10 +52,16 @@ those tasks autonomously while keeping the user in control.
      failure.
    - Hardware control plane negotiates with device managers (GPU, storage,
      peripherals) and mediates firmware/driver updates.
+   - **현재 구현:** `ainux_ai.hardware` 서브모듈이 하드웨어 인벤토리 스캔,
+     드라이버/펌웨어 카탈로그, 의존성 그래프 기반 설치 계획, 텔레메트리 수집,
+     컨텍스트 패브릭 이벤트 로깅을 제공하며 `ainux-ai-chat hardware` CLI로 노출된다.
 4. **Human Feedback Interface**
    - Conversational UI blending chat, voice, and visual prompts.
    - Explanation panels showing the planned steps, required permissions, and
      live progress updates.
+   - **현재 구현:** 글래스모피즘 스타일의 웹 스튜디오가 자연어 타임라인, 계획 카드,
+     실행 로그, 컨텍스트 패브릭 이벤트를 동시에 보여 주며 토글로 드라이런/오프라인
+     모드를 제어할 수 있다. 음성 입력, 다중 세션, 협업 뷰는 추후 계획이다.
 
 ## Intelligent Hardware & Runtime Management
 - **Hardware intent abstraction**: Users can request high-level goals such as

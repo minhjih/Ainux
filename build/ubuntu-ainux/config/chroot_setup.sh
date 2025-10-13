@@ -43,6 +43,18 @@ accelerators:
 PROFILE
 chown -R ainux:ainux /home/ainux/.config
 
+if [[ ! -f /home/ainux/.config/ainux/ai_client.json ]]; then
+  cat <<'AICONFIG' > /home/ainux/.config/ainux/ai_client.json
+{
+  "version": 1,
+  "default_provider": null,
+  "providers": {}
+}
+AICONFIG
+  chown ainux:ainux /home/ainux/.config/ainux/ai_client.json
+  chmod 600 /home/ainux/.config/ainux/ai_client.json
+fi
+
 # Seed shell profile with helper aliases
 cat <<'BASHRC' >> /home/ainux/.bashrc
 # Ainux automation helpers
@@ -52,7 +64,42 @@ alias ainux-diagnostics='sudo journalctl -p 3 -xb'
 alias ainux-schedule='sudo /usr/local/bin/ainux-scheduler'
 alias ainux-net-orchestrate='sudo /usr/local/bin/ainux-network-orchestrator'
 alias ainux-cluster-health='sudo /usr/local/bin/ainux-cluster-health'
+alias ainux-hw='ainux-ai-chat hardware'
+alias ainux-chat='ainux-ai-chat chat --interactive'
+alias ainux-orchestrate='ainux-ai-chat orchestrate'
+alias ainux-fabric='ainux-ai-chat context snapshot'
+alias ainux-ui='ainux-ai-chat ui'
 BASHRC
+
+# Install the GPT client toolkit for shell and automation use
+if [[ -d /tmp/ainux_ai ]]; then
+  install -d /usr/local/lib/ainux
+  cp -a /tmp/ainux_ai /usr/local/lib/ainux/
+  cat <<'AICHAT' > /usr/local/bin/ainux-ai-chat
+#!/usr/bin/env bash
+set -euo pipefail
+PYTHONPATH="/usr/local/lib/ainux:${PYTHONPATH:-}" exec python3 -m ainux_ai "$@"
+AICHAT
+  chmod +x /usr/local/bin/ainux-ai-chat
+  rm -rf /tmp/ainux_ai
+fi
+
+if [[ ! -f /home/ainux/.config/ainux/context_fabric.json ]]; then
+  PYTHONPATH="/usr/local/lib/ainux:${PYTHONPATH:-}" python3 - <<'PY'
+from ainux_ai.context import ContextFabric
+
+fabric = ContextFabric()
+fabric.merge_metadata({
+    "seeded_by": "chroot_setup",
+    "profile": "ainux-operator",
+})
+fabric.ingest_setting("operator.username", "ainux", scope="system")
+fabric.record_event("fabric.bootstrap", {"source": "chroot_setup"})
+fabric.save("/home/ainux/.config/ainux/context_fabric.json")
+PY
+  chown ainux:ainux /home/ainux/.config/ainux/context_fabric.json
+  chmod 600 /home/ainux/.config/ainux/context_fabric.json
+fi
 
 # Configure motd
 cat <<'MOTD' > /etc/update-motd.d/99-ainux

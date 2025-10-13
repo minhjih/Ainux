@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
 # Ainux Ubuntu remix build script.
 # This script bootstraps an Ubuntu-based live ISO customised with the
 # intelligent automation hooks described in the Ainux design document.
@@ -22,11 +25,12 @@ RELEASE="jammy"
 ARCH="amd64"
 MIRROR="http://archive.ubuntu.com/ubuntu"
 ISO_LABEL="AINUX"
-WORK_DIR="$(pwd)/work"
+WORK_DIR="$SCRIPT_DIR/work"
 ROOTFS_DIR="$WORK_DIR/chroot"
 ISO_DIR="$WORK_DIR/iso"
-CONFIG_DIR="$(pwd)/config"
-OVERLAY_DIR="$(pwd)/overlay"
+CONFIG_DIR="$SCRIPT_DIR/config"
+OVERLAY_DIR="$SCRIPT_DIR/overlay"
+AI_CLIENT_DIR="$REPO_ROOT/ainux_ai"
 CHROOT_MOUNTED=0
 
 PACKAGES_FILE="$CONFIG_DIR/packages.txt"
@@ -140,6 +144,10 @@ seed_configuration_files() {
   if [[ -f "$CHROOT_SCRIPT" ]]; then
     sudo cp "$CHROOT_SCRIPT" "$ROOTFS_DIR/tmp/chroot_setup.sh"
     sudo chmod +x "$ROOTFS_DIR/tmp/chroot_setup.sh"
+  fi
+  if [[ -d "$AI_CLIENT_DIR" ]]; then
+    sudo rm -rf "$ROOTFS_DIR/tmp/ainux_ai"
+    sudo cp -a "$AI_CLIENT_DIR" "$ROOTFS_DIR/tmp/"
   fi
 }
 
