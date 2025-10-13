@@ -1,8 +1,8 @@
 # Ainux
 <center>
   <img src="./folder/ainux.png"
-    width="100"
-    height="100"
+    width="500"
+    height="500"
   />
 </center>
 Ainux is an AI-native operating system concept that layers intelligent
