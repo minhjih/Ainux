@@ -1,5 +1,9 @@
 # Ainux
 
+<p align='center'>
+  <img src='./folder/ainux.png' width="300px" height="300px"/>
+</p>
+
 Ainux is an AI-native operating system concept that layers intelligent
 automation and hardware orchestration on top of a familiar Linux user
 experience. This repository now contains both the high-level architecture
