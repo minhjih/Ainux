@@ -216,6 +216,18 @@ prepare_directories() {
   mkdir -p "$ROOTFS_DIR" "$ISO_DIR" "$EFI_STAGING_DIR"
 }
 
+sync_resolv_conf() {
+  if [[ -e /etc/resolv.conf ]]; then
+    sudo mkdir -p "$ROOTFS_DIR/etc"
+    if [[ -L "$ROOTFS_DIR/etc/resolv.conf" || -f "$ROOTFS_DIR/etc/resolv.conf" ]]; then
+      sudo rm -f "$ROOTFS_DIR/etc/resolv.conf"
+    fi
+    sudo cp /etc/resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
+  else
+    echo "[warn] Host /etc/resolv.conf not found; DNS queries inside the chroot may fail." >&2
+  fi
+}
+
 remove_foreign_qemu_helper() {
   if [[ -n "$FOREIGN_QEMU_BASENAME" ]]; then
     local helper_path="$ROOTFS_DIR/usr/bin/$FOREIGN_QEMU_BASENAME"
@@ -233,6 +245,7 @@ run_foreign_second_stage() {
   sudo mkdir -p \
     "$ROOTFS_DIR/dev" "$ROOTFS_DIR/dev/pts" \
     "$ROOTFS_DIR/proc" "$ROOTFS_DIR/sys" "$ROOTFS_DIR/run"
+  sync_resolv_conf
   sudo mount --bind /dev "$ROOTFS_DIR/dev"
   sudo mount --bind /dev/pts "$ROOTFS_DIR/dev/pts"
   sudo mount -t proc /proc "$ROOTFS_DIR/proc"
@@ -374,6 +387,7 @@ GRUB
 
 prepare_chroot_env() {
   echo "[chroot] Mounting proc/sys/dev"
+  sync_resolv_conf
   sudo mount --bind /dev "$ROOTFS_DIR/dev"
   sudo mount --bind /dev/pts "$ROOTFS_DIR/dev/pts"
   sudo mount -t proc /proc "$ROOTFS_DIR/proc"

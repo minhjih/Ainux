@@ -64,6 +64,12 @@ because the host kernel cannot execute the target architecture binaries.
 > 빠르게 이미지를 구성할 수 있습니다. 필요 시 `--mirror` 옵션으로 원하는 URL을
 > 지정하면 즉시 덮어쓸 수 있습니다.
 
+> 📡 **DNS/네트워크 확인:** 빌더는 chroot 안에서 패키지를 내려받기 전에 호스트의
+> `/etc/resolv.conf`를 복사합니다. 호스트가 사설 DNS, VPN, 프록시 등을 사용한다면
+> 해당 설정이 `/etc/resolv.conf`에 올바르게 반영돼 있어야 하며, 파일이 비어 있거나
+> 존재하지 않으면 chroot 내부에서 `Temporary failure resolving ...` 오류가 발생합니다.
+> 이런 경우에는 호스트의 DNS 구성을 먼저 정상화한 뒤 다시 빌드를 시도하세요.
+
 During a foreign build the script keeps the QEMU helper inside the chroot until
 all package configuration tasks finish, preventing confusing errors like
 ``/usr/bin/apt-get: No such file or directory`` that arise when the host tries

@@ -58,6 +58,11 @@ sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64 --output ~/ainu
 > 이 포트 미러가 가장 안정적으로 패키지를 내려받으므로 별도 설정 없이도 빠르게 빌드할 수
 > 있습니다. 다른 거울을 사용하려면 `--mirror` 옵션으로 URL을 명시하세요.
 
+> 📡 **DNS 확인:** chroot 내부에서 패키지를 내려받을 때 호스트의 `/etc/resolv.conf`를
+> 그대로 복사하여 사용합니다. 만약 호스트가 커스텀 DNS를 쓰거나 VPN/프록시 환경에 있다면
+> 해당 설정이 올바르게 `/etc/resolv.conf`에 반영되어 있어야 하며, 파일이 비어 있거나
+> 접근할 수 없으면 `Temporary failure resolving ...` 오류가 발생할 수 있습니다.
+
 > 🚧 **QEMU 세그멘테이션 폴트 대응:** 교차 아키텍처 빌드에서 `QEMU internal SIGSEGV`
 > 등의 메시지가 뜬 뒤 `apt-get: No such file or directory`가 이어진다면, 두 번째
 > debootstrap 단계가 정상적으로 종료되지 않은 상태입니다. 스크립트가 자동으로
