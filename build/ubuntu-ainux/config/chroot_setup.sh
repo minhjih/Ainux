@@ -75,12 +75,13 @@ BASHRC
 if [[ -d /tmp/ainux_ai ]]; then
   install -d /usr/local/lib/ainux
   cp -a /tmp/ainux_ai /usr/local/lib/ainux/
-  cat <<'AICHAT' > /usr/local/bin/ainux-ai-chat
+  cat <<'AINUXCLIENT' > /usr/local/bin/ainux-client
 #!/usr/bin/env bash
 set -euo pipefail
 PYTHONPATH="/usr/local/lib/ainux:${PYTHONPATH:-}" exec python3 -m ainux_ai "$@"
-AICHAT
-  chmod +x /usr/local/bin/ainux-ai-chat
+AINUXCLIENT
+  chmod +x /usr/local/bin/ainux-client
+  ln -sf ainux-client /usr/local/bin/ainux-ai-chat
   rm -rf /tmp/ainux_ai
 fi
 

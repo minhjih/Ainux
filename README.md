@@ -63,10 +63,10 @@ log transcripts for auditing.
 
 ```bash
 # GPT 제공자를 활용하여 GPU 드라이버 갱신 계획을 생성하고 드라이런합니다.
-python -m ainux_ai orchestrate "CUDA랑 GPU 드라이버 최신 버전으로 맞춰줘" --dry-run
+./ainux-client orchestrate "CUDA랑 GPU 드라이버 최신 버전으로 맞춰줘" --dry-run
 
 # 컨텍스트 JSON을 전달하여 유지보수 대상 정보를 함께 넘길 수도 있습니다.
-python -m ainux_ai orchestrate "금요일 21시에 추론 서버 네트워크 점검 예약해줘" \
+./ainux-client orchestrate "금요일 21시에 추론 서버 네트워크 점검 예약해줘" \
   --context maint_window.json
 ```
 
@@ -77,26 +77,26 @@ python -m ainux_ai orchestrate "금요일 21시에 추론 서버 네트워크 �
 
 ## 컨텍스트 패브릭 활용하기
 
-`ainux-ai-chat context` 서브커맨드는 파일, 설정, 이벤트를 지식 그래프와
+`ainux-client context` 서브커맨드는 파일, 설정, 이벤트를 지식 그래프와
 이벤트 버스로 수집하여 오케스트레이터가 참조할 수 있는 공통 상태를
 만듭니다. CLI에서 즉시 스냅샷을 살펴보고 새로운 정보를 주입할 수
 있습니다.
 
 ```bash
 # 설계 문서를 그래프에 등록하고 태그를 달기
-python -m ainux_ai context ingest-file docs/ai_friendly_os_design.md \
+./ainux-client context ingest-file docs/ai_friendly_os_design.md \
   --label "Architecture spec" --tag design --tag docs
 
 # 오케스트레이터 기본 모드를 설정 스코프에 기록
-python -m ainux_ai context ingest-setting orchestrator.mode assist --scope user
+./ainux-client context ingest-setting orchestrator.mode assist --scope user
 
 # 유지보수 이벤트를 남기고 최근 상태를 확인
-python -m ainux_ai context record-event maintenance.started \
+./ainux-client context record-event maintenance.started \
   --data '{"target": "gpu-fleet"}'
-python -m ainux_ai context snapshot --limit-events 5
+./ainux-client context snapshot --limit-events 5
 
 # 자연어 오케스트레이션에 컨텍스트 패브릭 스냅샷을 병합
-python -m ainux_ai orchestrate "토요일 02시에 GPU 점검 예약" --use-fabric
+./ainux-client orchestrate "토요일 02시에 GPU 점검 예약" --use-fabric
 ```
 
 스냅샷은 `~/.config/ainux/context_fabric.json`에 저장되며, `--fabric-path`
@@ -106,25 +106,25 @@ python -m ainux_ai orchestrate "토요일 02시에 GPU 점검 예약" --use-fabr
 
 ## 지능형 하드웨어 자동화
 
-`ainux_ai.hardware` 패키지와 `ainux-ai-chat hardware` 서브커맨드는 드라이버·
+`ainux_ai.hardware` 패키지와 `ainux-client hardware` 서브커맨드는 드라이버·
 펌웨어 카탈로그, 의존성 그래프, 텔레메트리 수집을 하나로 묶어 GPU/가속기
 자동화를 실행합니다. 컨텍스트 패브릭을 사용하면 스캔과 실행 로그가 자동으로
 지식 그래프와 이벤트 버스에 기록됩니다.
 
 ```bash
 # 현재 시스템 하드웨어를 스캔하고 카탈로그에 저장
-python -m ainux_ai hardware scan
+./ainux-client hardware scan
 
 # 드라이버/펌웨어 블루프린트 확인 및 추가
-python -m ainux_ai hardware catalog show
-python -m ainux_ai hardware catalog add-driver nvidia-driver 535 --package nvidia-driver-535 \
+./ainux-client hardware catalog show
+./ainux-client hardware catalog add-driver nvidia-driver 535 --package nvidia-driver-535 \
   --package nvidia-dkms-535 --module nvidia --vendor nvidia --supports 10de:1eb8
 
 # 감지된 컴포넌트를 기준으로 설치 계획 생성 (JSON 출력)
-python -m ainux_ai hardware plan --json
+./ainux-client hardware plan --json
 
 # 텔레메트리 스냅샷을 3회 수집하고 패브릭 이벤트로 남기기
-python -m ainux_ai hardware telemetry --samples 3 --interval 2
+./ainux-client hardware telemetry --samples 3 --interval 2
 ```
 
 `--catalog-path`로 카탈로그 저장 위치를, `--fabric-path`로 패브릭 경로를
@@ -137,26 +137,27 @@ python -m ainux_ai hardware telemetry --samples 3 --interval 2
 새로 추가된 `scheduler`, `network`, `cluster` 서브커맨드는 유지보수 윈도우,
 배치 작업, 네트워크 정책, 클러스터 헬스를 하나의 도메인 명령 표면으로
 제공합니다. 라이브 ISO에서는 `ainux-scheduler`, `ainux-network-orchestrator`,
-`ainux-cluster-health` 래퍼가 각각 `ainux-ai-chat` CLI를 호출합니다.
+`ainux-cluster-health` 래퍼가 각각 `ainux-client` CLI를 호출합니다 (`ainux-ai-chat`
+별칭 유지).
 
 ```bash
 # 사용 가능한 Ansible 블루프린트 나열 및 실행 (드라이런)
-python -m ainux_ai scheduler list --json
-python -m ainux_ai scheduler run maintenance/restart_gpu --dry-run --extra window=nightly
+./ainux-client scheduler list --json
+./ainux-client scheduler run maintenance/restart_gpu --dry-run --extra window=nightly
 
 # SLURM 배치 작업 제출/조회/취소 + 정비 윈도우 관리
-python -m ainux_ai scheduler job -- --wrap="bash run-smoke-tests.sh" --dry-run
-python -m ainux_ai scheduler status --json
-python -m ainux_ai scheduler window create nightly-maint --duration 90 --target node-a --target node-b
+./ainux-client scheduler job -- --wrap="bash run-smoke-tests.sh" --dry-run
+./ainux-client scheduler status --json
+./ainux-client scheduler window create nightly-maint --duration 90 --target node-a --target node-b
 
 # 네트워크 프로파일 저장 및 적용 (QoS/Firewall/VLAN 포함)
-python -m ainux_ai network save edge-qos --interface eno1 --qos eno1:2000 --firewall 'add rule inet filter forward drop'
-python -m ainux_ai network apply edge-qos --dry-run
-python -m ainux_ai network qos eno2:500 --dry-run
+./ainux-client network save edge-qos --interface eno1 --qos eno1:2000 --firewall 'add rule inet filter forward drop'
+./ainux-client network apply edge-qos --dry-run
+./ainux-client network qos eno2:500 --dry-run
 
 # 클러스터 헬스 스냅샷 또는 주기적 모니터링
-python -m ainux_ai cluster snapshot --json
-python -m ainux_ai cluster watch --interval 30 --limit 3
+./ainux-client cluster snapshot --json
+./ainux-client cluster watch --interval 30 --limit 3
 ```
 
 스케줄러 서비스는 컨텍스트 패브릭과 연동해 정비 윈도우 및 작업 이벤트를
@@ -180,13 +181,13 @@ python -m ainux_ai cluster watch --interval 30 --limit 3
 
 ```bash
 # 기본 설정: 드라이런 모드 + 컨텍스트 패브릭 활성화
-python -m ainux_ai ui
+./ainux-client ui
 
 # GPU 작업을 즉시 실행하고 싶다면 --execute를 명시
-python -m ainux_ai ui --execute --provider openai
+./ainux-client ui --execute --provider openai
 
 # 서버 환경에서 브라우저 없이 띄우고 싶다면 --no-browser 사용
-python -m ainux_ai ui --host 0.0.0.0 --port 9000 --no-browser
+./ainux-client ui --host 0.0.0.0 --port 9000 --no-browser
 ```
 
 UI 내 토글을 통해 드라이런/실행, 오프라인 모드, 컨텍스트 패브릭 사용 여부를
@@ -226,7 +227,7 @@ VM에서는 다음과 같은 특징을 기대할 수 있습니다.
 - **하드웨어 자동화** – VM에서는 PCI/센서 정보가 제한되므로 스캔 결과가
   비어 있을 수 있지만, 카탈로그 관리·의존성 계산·텔레메트리 수집은
   시뮬레이션 데이터로 수행되어 워크플로우를 검증할 수 있습니다.
-- **브라우저 스튜디오** – `python -m ainux_ai ui --host 0.0.0.0`를 실행하면
+- **브라우저 스튜디오** – `./ainux-client ui --host 0.0.0.0`를 실행하면
   VM 내부 브라우저 혹은 포트 포워딩을 통해 호스트 브라우저에서 동일한 UI를
   사용할 수 있습니다.
 

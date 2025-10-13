@@ -8,13 +8,13 @@ those tasks autonomously while keeping the user in control.
 
 > **Implementation status:** The current prototype focuses on infrastructure
 > automation scaffolding and now ships with a configurable GPT connector
-> (`ainux-ai-chat`), a baseline intent→plan→execution orchestrator, the context
+> (`ainux-client`, via the legacy `ainux-ai-chat` alias), a baseline intent→plan→execution orchestrator, the context
 > fabric module for 파일/설정/이벤트 그래프화, 지능형 하드웨어 자동화
 > (`ainux_ai.hardware`) that catalogs devices/드라이버/펌웨어와 텔레메트리를
 > 관리하며, 인프라 스케줄링/네트워크/클러스터 헬스를 담당하는
 > `ainux_ai.infrastructure` 서비스(`scheduler`, `network`, `cluster` 서브커맨드),
 > 그리고 자연어·플랜·실행 로그를 한 화면에 묶어 주는 브라우저 UI
-> (`python -m ainux_ai ui`). Richer conversational planners, governance &
+> (`ainux-client ui`). Richer conversational planners, governance &
 > security controls, and the immersive UI capabilities described below remain
 > in development and are not yet fully integrated into the Ubuntu remix.
 
