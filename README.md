@@ -1,4 +1,5 @@
 # Ainux
+<img src="./folder/ainux.png">
 
 Ainux is an AI-native operating system concept that layers intelligent
 automation and hardware orchestration on top of a familiar Linux user
