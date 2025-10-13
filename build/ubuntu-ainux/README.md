@@ -58,6 +58,13 @@ and then triggers the second stage inside the chroot. Skipping these packages
 leads to debootstrap errors such as `Failure trying to run: chroot ... /bin/true`
 because the host kernel cannot execute the target architecture binaries.
 
+If debootstrap reports `Failure while configuring required packages`, the
+second stage aborted while configuring the base system. The build script now
+bind-mounts `/proc`, `/sys`, and `/dev` automatically and preserves the full
+log at `work/debootstrap.log` (even when the run fails) so you can inspect the
+exact package that stopped the process. Re-run with `--keep-work` for further
+analysis if needed.
+
 You must execute the build as `root` (or via `sudo`) because debootstrap and the
 ISO generation steps require elevated privileges.
 

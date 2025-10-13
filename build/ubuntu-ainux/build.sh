@@ -200,6 +200,50 @@ prepare_directories() {
   mkdir -p "$ROOTFS_DIR" "$ISO_DIR" "$EFI_STAGING_DIR"
 }
 
+run_foreign_second_stage() {
+  local mounted=0
+  echo "[bootstrap] Preparing mounts for foreign second stage"
+  sudo mkdir -p \
+    "$ROOTFS_DIR/dev" "$ROOTFS_DIR/dev/pts" \
+    "$ROOTFS_DIR/proc" "$ROOTFS_DIR/sys" "$ROOTFS_DIR/run"
+  sudo mount --bind /dev "$ROOTFS_DIR/dev"
+  sudo mount --bind /dev/pts "$ROOTFS_DIR/dev/pts"
+  sudo mount -t proc /proc "$ROOTFS_DIR/proc"
+  sudo mount -t sysfs /sys "$ROOTFS_DIR/sys"
+  sudo mount -t tmpfs tmpfs "$ROOTFS_DIR/run"
+  mounted=1
+
+  echo "[bootstrap] Executing second-stage debootstrap inside chroot"
+  if ! sudo chroot "$ROOTFS_DIR" /debootstrap/debootstrap --second-stage; then
+    echo "[error] Foreign second stage failed while configuring base packages" >&2
+    if [[ -f "$ROOTFS_DIR/debootstrap/debootstrap.log" ]]; then
+      echo "[error] Dumping tail of debootstrap log:" >&2
+      sudo tail -n 50 "$ROOTFS_DIR/debootstrap/debootstrap.log" >&2 || true
+      if [[ -d "$WORK_DIR" ]]; then
+        sudo cp "$ROOTFS_DIR/debootstrap/debootstrap.log" "$WORK_DIR/debootstrap.log" || true
+        echo "[hint] Full log preserved at $WORK_DIR/debootstrap.log" >&2
+      fi
+    fi
+    KEEP_WORK=1
+    if [[ $mounted -eq 1 ]]; then
+      sudo umount -lf "$ROOTFS_DIR/dev/pts" || true
+      sudo umount -lf "$ROOTFS_DIR/dev" || true
+      sudo umount -lf "$ROOTFS_DIR/proc" || true
+      sudo umount -lf "$ROOTFS_DIR/sys" || true
+      sudo umount -lf "$ROOTFS_DIR/run" || true
+    fi
+    exit 1
+  fi
+
+  if [[ $mounted -eq 1 ]]; then
+    sudo umount -lf "$ROOTFS_DIR/dev/pts" || true
+    sudo umount -lf "$ROOTFS_DIR/dev" || true
+    sudo umount -lf "$ROOTFS_DIR/proc" || true
+    sudo umount -lf "$ROOTFS_DIR/sys" || true
+    sudo umount -lf "$ROOTFS_DIR/run" || true
+  fi
+}
+
 bootstrap_base() {
   echo "[bootstrap] Running debootstrap for $RELEASE/$ARCH"
   if [[ $USE_FOREIGN_STAGE -eq 1 ]]; then
@@ -214,8 +258,7 @@ bootstrap_base() {
     local qemu_basename
     qemu_basename="$(basename "$QEMU_STATIC_BIN")"
     sudo cp "$QEMU_STATIC_BIN" "$ROOTFS_DIR/usr/bin/"
-    echo "[bootstrap] Executing second-stage debootstrap inside chroot"
-    sudo chroot "$ROOTFS_DIR" /debootstrap/debootstrap --second-stage
+    run_foreign_second_stage
     sudo rm -f "$ROOTFS_DIR/usr/bin/$qemu_basename"
   else
     sudo debootstrap --arch="$ARCH" "$RELEASE" "$ROOTFS_DIR" "$MIRROR"

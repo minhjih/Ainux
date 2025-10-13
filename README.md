@@ -53,6 +53,12 @@ sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64 --output ~/ainu
 > appropriate QEMU static binary. Without those packages debootstrap will fail
 > with errors such as `Failure trying to run: chroot ... /bin/true`.
 
+> 🛠️ **패키지 설정 실패 대응:** `Failure while configuring required packages` 같은
+> 메시지가 출력되면 debootstrap 두 번째 단계에서 기본 패키지 설정이 멈춘
+> 것입니다. 스크립트가 `/proc`, `/sys`, `/dev` 등을 자동 마운트하고 실패 시
+> `work/debootstrap.log`를 보존하므로, 로그를 확인하거나 `--keep-work`로 다시
+> 실행해 문제 패키지를 진단하세요.
+
 Refer to `build/ubuntu-ainux/README.md` for prerequisites and customization
 options, including the new scheduling/packet-management blueprints seeded into
 the live image.
