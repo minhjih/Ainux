@@ -13,6 +13,8 @@ maintaining compatibility with upstream updates.
 * Uses Ubuntu 22.04 LTS (`jammy`) as the baseline.
 * Installs the Ainux automation stack (Ansible, Python tooling, telemetry
   helpers) plus NVIDIA drivers, CUDA toolkit, and container runtime support.
+  GPU-related packages are marked as optional, so the build continues even if a
+  particular architecture or mirror does not publish them.
 * Preloads infrastructure scheduling toolchain (SLURM clients, networking
   diagnostics, IPMI utilities) so AI agents can coordinate complex hardware
   operations out-of-the-box.
@@ -142,6 +144,8 @@ sudo dd if=~/ainux-jammy.iso of=/dev/sdX bs=4M status=progress && sync
 ## Extending the Build
 
 * **Additional Packages:** Add them to `config/packages.txt` (one per line).
+  Prefix a package with `?` to treat it as optional—useful for hardware-specific
+  drivers that may be missing from certain architectures or mirrors.
 * **Post-Install Logic:** Modify `config/chroot_setup.sh` to run extra commands
   inside the chroot. For complex flows consider invoking Ansible playbooks.
 * **Hardware Blueprints:** Place YAML or JSON templates inside `overlay/` or

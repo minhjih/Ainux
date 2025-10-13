@@ -348,9 +348,41 @@ configure_apt() {
 install_packages() {
   if [[ -f "$PACKAGES_FILE" ]]; then
     echo "[packages] Installing additional packages"
-    sudo chroot "$ROOTFS_DIR" /usr/bin/env bash -c \
-      "/usr/bin/apt-get update && grep -Ev '^[[:space:]]*(#|$)' /tmp/packages.txt | xargs -r /usr/bin/apt-get install -y"
-    sudo rm -f "$ROOTFS_DIR/tmp/packages.txt"
+    sudo tee "$ROOTFS_DIR/tmp/install_packages.sh" >/dev/null <<'INSTALLPKG'
+#!/usr/bin/env bash
+set -euo pipefail
+
+/usr/bin/apt-get update
+
+while IFS= read -r line; do
+  pkg="$(printf '%s\n' "$line" | sed -e 's/#.*$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  if [[ -z "$pkg" ]]; then
+    continue
+  fi
+
+  optional=0
+  if [[ "${pkg:0:1}" == "?" ]]; then
+    optional=1
+    pkg="${pkg:1}"
+  fi
+
+  if [[ $optional -eq 1 ]]; then
+    if /usr/bin/apt-get install -y "$pkg"; then
+      continue
+    fi
+    status=$?
+    echo "[packages] Optional package $pkg unavailable (exit $status); skipping" >&2
+    /usr/bin/apt-get -y --fix-broken install >/dev/null 2>&1 || true
+  else
+    /usr/bin/apt-get install -y "$pkg"
+  fi
+done < /tmp/packages.txt
+
+/usr/bin/apt-get clean
+INSTALLPKG
+    sudo chmod +x "$ROOTFS_DIR/tmp/install_packages.sh"
+    sudo chroot "$ROOTFS_DIR" /tmp/install_packages.sh
+    sudo rm -f "$ROOTFS_DIR/tmp/install_packages.sh" "$ROOTFS_DIR/tmp/packages.txt"
   fi
 }
 
