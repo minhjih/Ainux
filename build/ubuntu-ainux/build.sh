@@ -283,7 +283,8 @@ configure_apt() {
 install_packages() {
   if [[ -f "$PACKAGES_FILE" ]]; then
     echo "[packages] Installing additional packages"
-    sudo chroot "$ROOTFS_DIR" /usr/bin/env bash -c "apt-get update && grep -Ev '^[[:space:]]*(#|$)' /tmp/packages.txt | xargs -r apt-get install -y"
+    sudo chroot "$ROOTFS_DIR" /usr/bin/env bash -c \
+      "/usr/bin/apt-get update && grep -Ev '^[[:space:]]*(#|$)' /tmp/packages.txt | xargs -r /usr/bin/apt-get install -y"
     sudo rm -f "$ROOTFS_DIR/tmp/packages.txt"
   fi
 }
@@ -362,7 +363,7 @@ seed_configuration_files() {
 
 configure_live_boot() {
   echo "[live] Setting up live boot configuration"
-  sudo chroot "$ROOTFS_DIR" apt-get update
+  sudo chroot "$ROOTFS_DIR" /usr/bin/apt-get update
   local pkg_args=(linux-generic casper lupin-casper discover laptop-detect os-prober network-manager)
   if [[ "$ARCH" == "amd64" || "$ARCH" == "x86_64" ]]; then
     pkg_args+=(grub-pc-bin)
@@ -370,8 +371,8 @@ configure_live_boot() {
   if [[ -n "$EFI_PACKAGE_NAME" ]]; then
     pkg_args+=("$EFI_PACKAGE_NAME")
   fi
-  sudo chroot "$ROOTFS_DIR" apt-get install -y --no-install-recommends "${pkg_args[@]}"
-  sudo chroot "$ROOTFS_DIR" apt-get clean
+  sudo chroot "$ROOTFS_DIR" /usr/bin/apt-get install -y --no-install-recommends "${pkg_args[@]}"
+  sudo chroot "$ROOTFS_DIR" /usr/bin/apt-get clean
   sudo rm -f "$ROOTFS_DIR/etc/machine-id"
   sudo touch "$ROOTFS_DIR/etc/machine-id"
 }
