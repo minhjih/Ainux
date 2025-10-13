@@ -45,6 +45,19 @@ chroot, so you do **not** need to install additional GRUB packages on the host
 machine. As long as the standard ISO tooling above is available, the workflow
 produces a hybrid BIOS/UEFI image automatically.
 
+If you are **cross-building** (for example, assembling an `arm64` ISO on an
+`amd64` host), also install:
+
+```bash
+sudo apt-get install -y qemu-user-static binfmt-support
+```
+
+The script detects the architecture mismatch, performs the first debootstrap
+stage with `--foreign`, copies the matching QEMU static binary into the chroot,
+and then triggers the second stage inside the chroot. Skipping these packages
+leads to debootstrap errors such as `Failure trying to run: chroot ... /bin/true`
+because the host kernel cannot execute the target architecture binaries.
+
 You must execute the build as `root` (or via `sudo`) because debootstrap and the
 ISO generation steps require elevated privileges.
 

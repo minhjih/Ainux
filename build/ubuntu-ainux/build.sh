@@ -53,6 +53,10 @@ EFI_GRUB_TARGET=""
 EFI_BOOT_FILENAME=""
 EFI_PACKAGE_NAME=""
 
+HOST_ARCH=""
+USE_FOREIGN_STAGE=0
+QEMU_STATIC_BIN=""
+
 PACKAGES_FILE="$CONFIG_DIR/packages.txt"
 CHROOT_SCRIPT="$CONFIG_DIR/chroot_setup.sh"
 GRUB_CFG_FILE="$CONFIG_DIR/grub.cfg"
@@ -108,6 +112,51 @@ cleanup() {
   fi
 }
 
+normalize_arch() {
+  local value="$1"
+  case "$value" in
+    x86_64)
+      echo "amd64" ;;
+    aarch64)
+      echo "arm64" ;;
+    armv7l)
+      echo "armhf" ;;
+    i686|i386)
+      echo "i386" ;;
+    *)
+      echo "$value" ;;
+  esac
+}
+
+resolve_host_arch() {
+  if command -v dpkg >/dev/null 2>&1; then
+    HOST_ARCH="$(dpkg --print-architecture)"
+  else
+    HOST_ARCH="$(normalize_arch "$(uname -m)")"
+  fi
+  HOST_ARCH="$(normalize_arch "$HOST_ARCH")"
+}
+
+resolve_qemu_static() {
+  case "$ARCH" in
+    amd64|x86_64)
+      QEMU_STATIC_BIN="/usr/bin/qemu-x86_64-static" ;;
+    arm64|aarch64)
+      QEMU_STATIC_BIN="/usr/bin/qemu-aarch64-static" ;;
+    armhf)
+      QEMU_STATIC_BIN="/usr/bin/qemu-arm-static" ;;
+    armel)
+      QEMU_STATIC_BIN="/usr/bin/qemu-arm-static" ;;
+    i386)
+      QEMU_STATIC_BIN="/usr/bin/qemu-i386-static" ;;
+    riscv64)
+      QEMU_STATIC_BIN="/usr/bin/qemu-riscv64-static" ;;
+    *)
+      QEMU_STATIC_BIN=""
+      ;;
+  esac
+}
+
 check_dependencies() {
   local cmd_deps=(debootstrap mksquashfs xorriso rsync mkfs.vfat)
   local missing=()
@@ -126,10 +175,23 @@ check_dependencies() {
     missing+=("syslinux modules (file $ldlinux_c32)")
   fi
 
+  if [[ $USE_FOREIGN_STAGE -eq 1 ]]; then
+    resolve_qemu_static
+    if [[ -z "$QEMU_STATIC_BIN" ]]; then
+      missing+=("qemu-user-static (unsupported architecture mapping for $ARCH)")
+    elif [[ ! -x "$QEMU_STATIC_BIN" ]]; then
+      missing+=("qemu-user-static (binary $QEMU_STATIC_BIN)")
+    fi
+  fi
+
   if (( ${#missing[@]} )); then
     echo "[error] Missing build dependencies:" >&2
     printf '  - %s\n' "${missing[@]}" >&2
-    echo "[hint] Install required packages: sudo apt-get install -y debootstrap squashfs-tools xorriso isolinux mtools dosfstools rsync" >&2
+    local hint_pkgs="debootstrap squashfs-tools xorriso isolinux mtools dosfstools rsync"
+    if [[ $USE_FOREIGN_STAGE -eq 1 ]]; then
+      hint_pkgs+=" qemu-user-static binfmt-support"
+    fi
+    echo "[hint] Install required packages: sudo apt-get install -y $hint_pkgs" >&2
     exit 1
   fi
 }
@@ -140,7 +202,24 @@ prepare_directories() {
 
 bootstrap_base() {
   echo "[bootstrap] Running debootstrap for $RELEASE/$ARCH"
-  sudo debootstrap --arch="$ARCH" "$RELEASE" "$ROOTFS_DIR" "$MIRROR"
+  if [[ $USE_FOREIGN_STAGE -eq 1 ]]; then
+    echo "[bootstrap] Host architecture ($HOST_ARCH) differs from target ($ARCH); using foreign bootstrap"
+    sudo debootstrap --arch="$ARCH" --foreign "$RELEASE" "$ROOTFS_DIR" "$MIRROR"
+    resolve_qemu_static
+    if [[ -z "$QEMU_STATIC_BIN" || ! -x "$QEMU_STATIC_BIN" ]]; then
+      echo "[error] Required qemu-user-static binary not found for $ARCH (expected $QEMU_STATIC_BIN)" >&2
+      exit 1
+    fi
+    sudo mkdir -p "$ROOTFS_DIR/usr/bin"
+    local qemu_basename
+    qemu_basename="$(basename "$QEMU_STATIC_BIN")"
+    sudo cp "$QEMU_STATIC_BIN" "$ROOTFS_DIR/usr/bin/"
+    echo "[bootstrap] Executing second-stage debootstrap inside chroot"
+    sudo chroot "$ROOTFS_DIR" /debootstrap/debootstrap --second-stage
+    sudo rm -f "$ROOTFS_DIR/usr/bin/$qemu_basename"
+  else
+    sudo debootstrap --arch="$ARCH" "$RELEASE" "$ROOTFS_DIR" "$MIRROR"
+  fi
 }
 
 copy_overlay() {
@@ -390,6 +469,15 @@ main() {
         exit 1 ;;
     esac
   done
+
+  resolve_host_arch
+  local normalized_target="$(normalize_arch "$ARCH")"
+  if [[ -n "$HOST_ARCH" && "$HOST_ARCH" != "$normalized_target" ]]; then
+    USE_FOREIGN_STAGE=1
+    ARCH="$normalized_target"
+  else
+    ARCH="$normalized_target"
+  fi
 
   determine_efi_target
   check_dependencies

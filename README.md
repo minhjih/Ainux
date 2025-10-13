@@ -45,6 +45,14 @@ sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64 --output ~/ainu
 > halts, review `/tmp/ainux-build.log` (created automatically) for the failing
 > command or rerun with `--keep-work` to inspect the generated chroot.
 
+> 🧠 **Cross-architecture builds:** When the host CPU architecture (e.g. `amd64`)
+> differs from the target passed via `--arch` (e.g. `arm64`), install
+> `qemu-user-static` and `binfmt-support` in addition to the standard ISO tools.
+> The script now detects the mismatch automatically, runs debootstrap in
+> `--foreign` mode, and executes the second stage inside the chroot using the
+> appropriate QEMU static binary. Without those packages debootstrap will fail
+> with errors such as `Failure trying to run: chroot ... /bin/true`.
+
 Refer to `build/ubuntu-ainux/README.md` for prerequisites and customization
 options, including the new scheduling/packet-management blueprints seeded into
 the live image.
