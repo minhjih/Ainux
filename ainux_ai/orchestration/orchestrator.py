@@ -1,0 +1,145 @@
+"""High-level natural language orchestrator wiring."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, TYPE_CHECKING
+
+from ..client import ChatClient
+from .execution import (
+    ActionExecutor,
+    BlueprintCapability,
+    CapabilityRegistry,
+    DryRunCapability,
+    ShellCommandCapability,
+)
+from .intent import IntentParser
+from .models import ExecutionResult, OrchestrationResult
+from .planner import Planner
+from .safety import SafetyChecker
+
+
+if TYPE_CHECKING:
+    from ..context import ContextFabric
+
+
+class OrchestrationError(RuntimeError):
+    """Raised when orchestration cannot proceed."""
+
+
+@dataclass
+class AinuxOrchestrator:
+    """End-to-end natural language orchestrator composed of modular stages."""
+
+    intent_parser: IntentParser
+    planner: Planner
+    safety_checker: SafetyChecker
+    executor: ActionExecutor
+    fabric: Optional["ContextFabric"] = None
+    fabric_event_limit: int = 50
+
+    @classmethod
+    def with_client(
+        cls,
+        client: Optional[ChatClient] = None,
+        *,
+        fabric: Optional["ContextFabric"] = None,
+        fabric_event_limit: int = 50,
+    ) -> "AinuxOrchestrator":
+        """Factory that wires default components with an optional GPT client."""
+
+        intent_parser = IntentParser(client=client)
+        planner = Planner(client=client)
+        safety = SafetyChecker(client=client)
+        registry = CapabilityRegistry()
+        registry.register(DryRunCapability(name="hardware.apply_gpu_stack"))
+        registry.register(DryRunCapability(name="hardware.select_driver_combo"))
+        registry.register(DryRunCapability(name="inventory.collect_gpu_metadata"))
+        registry.register(DryRunCapability(name="scheduler.collect_targets"))
+        registry.register(DryRunCapability(name="scheduler.create_window"))
+        registry.register(DryRunCapability(name="communications.broadcast"))
+        registry.register(DryRunCapability(name="network.audit_state"))
+        registry.register(DryRunCapability(name="network.apply_changes"))
+        registry.register(DryRunCapability(name="analysis.review_request"))
+        registry.register(BlueprintCapability())
+        registry.register(ShellCommandCapability())
+        executor = ActionExecutor(registry=registry)
+        return cls(
+            intent_parser=intent_parser,
+            planner=planner,
+            safety_checker=safety,
+            executor=executor,
+            fabric=fabric,
+            fabric_event_limit=fabric_event_limit,
+        )
+
+    def orchestrate(
+        self,
+        request: str,
+        *,
+        context: Optional[Dict[str, object]] = None,
+        execute: bool = True,
+    ) -> OrchestrationResult:
+        """Run the full orchestration pipeline for *request*."""
+
+        combined_context = dict(context or {})
+        if self.fabric:
+            now = datetime.now(timezone.utc).isoformat()
+            self.fabric.merge_metadata({"last_request": request, "last_invocation": now})
+            self.fabric.record_event(
+                "orchestrator.request",
+                {"request": request, "execute": execute},
+            )
+            snapshot = self.fabric.snapshot(event_limit=self.fabric_event_limit)
+            combined_context.setdefault("fabric", snapshot.to_context_payload())
+
+        intent = self.intent_parser.parse(request, combined_context)
+        if intent.context_snapshot is None:
+            intent.context_snapshot = combined_context
+
+        plan = self.planner.create_plan(intent, combined_context)
+        safety = self.safety_checker.review(plan, combined_context)
+        if not safety.approved_steps and plan.steps:
+            raise OrchestrationError("All plan steps were blocked by safety checks")
+
+        execution_results: List[ExecutionResult] = []
+        if execute and safety.approved_steps:
+            execution_results = self.executor.execute_plan(safety.approved_steps, combined_context)
+        else:
+            execution_results = []
+
+        if self.fabric:
+            self.fabric.merge_metadata(
+                {
+                    "last_intent_action": intent.action,
+                    "last_plan_step_count": len(plan.steps),
+                    "last_safety_approved": len(safety.approved_steps),
+                    "last_safety_blocked": len(safety.blocked_steps),
+                    "last_execution_count": len(execution_results),
+                    "dry_run": not execute,
+                }
+            )
+            self.fabric.record_event(
+                "orchestrator.completed",
+                {
+                    "request": request,
+                    "approved_steps": len(safety.approved_steps),
+                    "blocked_steps": len(safety.blocked_steps),
+                    "executed_steps": len(execution_results),
+                    "dry_run": not execute,
+                },
+            )
+
+        return OrchestrationResult(intent=intent, plan=plan, safety=safety, execution=execution_results)
+
+    def dry_run(self, request: str, context: Optional[Dict[str, object]] = None) -> OrchestrationResult:
+        """Run orchestration but skip execution."""
+
+        return self.orchestrate(request, context=context, execute=False)
+
+
+__all__ = [
+    "AinuxOrchestrator",
+    "OrchestrationError",
+]
