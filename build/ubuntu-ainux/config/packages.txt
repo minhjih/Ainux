@@ -18,7 +18,7 @@ ca-certificates
 ufw
 net-tools
 nftables
-iptables-persistent
+# ?iptables-persistent
 bridge-utils
 ethtool
 lshw

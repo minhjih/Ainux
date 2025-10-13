@@ -15,6 +15,8 @@ maintaining compatibility with upstream updates.
   helpers) plus NVIDIA drivers, CUDA toolkit, and container runtime support.
   GPU-related packages are marked as optional, so the build continues even if a
   particular architecture or mirror does not publish them.
+* Treats `iptables-persistent` as an optional package so hypervisors without
+  netfilter modules (또는 미러에 패키지가 없는 경우)에서도 빌드가 멈추지 않습니다.
 * Preloads infrastructure scheduling toolchain (SLURM clients, networking
   diagnostics, IPMI utilities) so AI agents can coordinate complex hardware
   operations out-of-the-box.
@@ -146,6 +148,9 @@ sudo dd if=~/ainux-jammy.iso of=/dev/sdX bs=4M status=progress && sync
 * **Additional Packages:** Add them to `config/packages.txt` (one per line).
   Prefix a package with `?` to treat it as optional—useful for hardware-specific
   drivers that may be missing from certain architectures or mirrors.
+  예를 들어 기본 구성에서는 `?iptables-persistent`로 표시하여 netfilter가 비활성화된
+  VM에서도 빌드가 중단되지 않도록 했습니다. 방화벽 상태를 유지하고 싶다면 `?`를 제거하거나
+  ISO 부팅 후 수동으로 패키지를 설치하세요.
 * **Post-Install Logic:** Modify `config/chroot_setup.sh` to run extra commands
   inside the chroot. For complex flows consider invoking Ansible playbooks.
 * **Hardware Blueprints:** Place YAML or JSON templates inside `overlay/` or

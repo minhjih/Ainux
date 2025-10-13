@@ -68,6 +68,13 @@ sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64 --output ~/ainu
 > 빌드가 중단되지 않고 자동으로 건너뜁니다. GPU가 없는 노트북이나 ARM 포트 미러에서도
 > 안심하고 ISO를 생성할 수 있습니다.
 
+> 🔐 **가상 머신에서의 iptables 경고:** 일부 하이퍼바이저나 경량 커널은 `iptables`
+> 백엔드를 제공하지 않아 `iptables-persistent` 패키지가 설정 단계에서 경고 창을
+> 띄우기도 합니다. 지금은 이 패키지를 `?iptables-persistent`로 표시하여 선택적 설치로
+> 전환했으므로, 미러에 패키지가 없거나 VM에서 모듈이 비활성화되어도 빌드가 중단되지
+> 않습니다. 방화벽 규칙을 활용하려면 ISO 부팅 후 `sudo apt-get install iptables-persistent`
+> 로 수동 설치하거나 `packages.txt`에서 `?` 접두사를 제거한 뒤 다시 빌드하세요.
+
 > 🚧 **QEMU 세그멘테이션 폴트 대응:** 교차 아키텍처 빌드에서 `QEMU internal SIGSEGV`
 > 등의 메시지가 뜬 뒤 `apt-get: No such file or directory`가 이어진다면, 두 번째
 > debootstrap 단계가 정상적으로 종료되지 않은 상태입니다. 스크립트가 자동으로
