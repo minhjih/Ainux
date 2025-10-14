@@ -15,8 +15,17 @@ maintaining compatibility with upstream updates.
   helpers) plus NVIDIA drivers, CUDA toolkit, and container runtime support.
   GPU-related packages are marked as optional, so the build continues even if a
   particular architecture or mirror does not publish them.
+* Pulls in Ubuntu's `linux-generic` meta package so kernel headers are always
+  present, letting DKMS-based drivers (예: NVIDIA 스택) compile cleanly during the
+  image build instead of failing with missing header errors.
 * Treats `iptables-persistent` as an optional package so hypervisors without
   netfilter modules (또는 미러에 패키지가 없는 경우)에서도 빌드가 멈추지 않습니다.
+* Installs the `ubuntu-desktop-minimal` GNOME session, enables GDM auto-login for
+  the `ainux` user, and autostarts the browser-based Ainux Studio so the live ISO
+  immediately feels like a desktop OS rather than a server shell.
+* Replaces Ubuntu branding with Ainux identity across `/etc/os-release`,
+  `/etc/issue`, MOTD, GNOME backgrounds, icons, and the login greeter so prompts
+  and UI surfaces display `ainux` instead of `ubuntu`.
 * Configures Docker to default to the `fuse-overlayfs` storage driver so live
   sessions on read-only media avoid overlay "mapping" errors while still
   allowing installed systems to switch back to `overlay2` later.
@@ -112,6 +121,7 @@ build/ubuntu-ainux/
 │   ├── sources.list       # Custom apt mirror definition (uses @UBUNTU_MIRROR@ placeholder)
 │   └── (optional) grub.cfg for further boot menu customization
 └── overlay/               # Drop-in files copied into the root filesystem
+└── ../folder/             # (optional) Branding PNGs picked up automatically if present
 ```
 
 Populate the `overlay/` directory with configuration snippets, systemd units, or
@@ -173,6 +183,10 @@ TTY에서 수동 로그인이 필요한 경우 기본 자격 증명은 아래와
   기본 포함시키고 `/etc/docker/daemon.json`을 `fuse-overlayfs` 드라이버로 초기화합니다.
   디스크에 설치한 후 overlay2로 변경하려면 해당 파일을 편집 또는 삭제한 뒤 Docker를
   재시작하면 됩니다.
+* **Branding Overrides:** 리포지토리 루트에 위치한 `folder/` 디렉터리에 `ainux.png`,
+  `ainux_penguin.png` 파일을 추가하면 빌드 시 `/usr/share/ainux/branding/`으로 복사되어
+  GNOME 배경, 잠금 화면, 아이콘, 웹 스튜디오 전반에 반영됩니다. 폴더가 비어 있거나 파일이
+  없으면 패키지에 내장된 기본 아트워크가 사용됩니다.
 * **Post-Install Logic:** Modify `config/chroot_setup.sh` to run extra commands
   inside the chroot. For complex flows consider invoking Ansible playbooks.
 * **Hardware Blueprints:** Place YAML or JSON templates inside `overlay/` or
@@ -200,9 +214,11 @@ customisations are automatically discovered.
 ### GPT API bootstrap
 
 The live system ships with `/usr/local/bin/ainux-client` (plus a compatibility
-symlink `/usr/local/bin/ainux-ai-chat`), a wrapper around the Python module
-located at `/usr/local/lib/ainux/ainux_ai`. Configure an API key once and the
-chat client becomes available to automations and shell workflows:
+symlink `/usr/local/bin/ainux-ai-chat`) and also drops a convenience symlink at
+`/home/ainux/ainux-client` so live sessions can run either `ainux-client` or
+`./ainux-client` without additional setup. The wrapper delegates to the Python
+module located at `/usr/local/lib/ainux/ainux_ai`. Configure an API key once and
+the chat client becomes available to automations and shell workflows:
 
 ```bash
 ainux-client configure --default          # prompt for key/model/base URL
@@ -261,10 +277,11 @@ complete hardware timeline.
 The live image exposes `/usr/local/bin/ainux-client ui`, and the default shell
 profile creates a short alias `ainux-ui`. Launching the command starts a local
 web server (default `http://127.0.0.1:8787`) that renders a glassmorphism UI
-with three synchronized panes. Release 0.7 embeds the square Ainux logo and
-penguin mascot as base64 assets so the hero banner and floating mascot always
-render, while the build optionally copies overrides from `folder/` into
-`/usr/share/ainux/branding` to mirror your customized desktop experience:
+with three synchronized panes. Release 0.8 embeds the square Ainux logo and
+penguin mascot as base64 assets so the hero banner, desktop wallpaper, and
+floating mascot always render, while the build optionally copies overrides from
+`folder/` into `/usr/share/ainux/branding` to mirror your customized desktop
+experience:
 
 1. 자연어 대화 타임라인 – 사용자 프롬프트, 실행 모드, 경고 배지를 카드로 표시합니다.
 2. 계획·명령 로그 – 승인/차단 여부와 실행 결과를 단계별로 정리합니다.

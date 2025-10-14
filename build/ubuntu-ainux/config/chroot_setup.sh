@@ -17,6 +17,22 @@ enable_service() {
 enable_service NetworkManager.service
 enable_service ssh.service
 enable_service ufw.service
+enable_service gdm3.service
+
+# Ensure the live environment consistently presents the Ainux identity.
+echo "ainux" > /etc/hostname
+if grep -q '^127\.0\.1\.1' /etc/hosts; then
+  sed -i 's/^127\\.0\\.1\\.1.*/127.0.1.1\tainux/' /etc/hosts
+else
+  echo "127.0.1.1\tainux" >> /etc/hosts
+fi
+hostname ainux || true
+
+mkdir -p /etc/cloud/cloud.cfg.d
+cat <<'CLOUD' > /etc/cloud/cloud.cfg.d/99-ainux-preserve-hostname.cfg
+preserve_hostname: true
+manage_etc_hosts: false
+CLOUD
 
 # Create the default Ainux orchestrator user
 if ! id -u ainux >/dev/null 2>&1; then
@@ -33,6 +49,67 @@ cat <<'AUTOLOGIN' > /etc/systemd/system/getty@tty1.service.d/override.conf
 ExecStart=
 ExecStart=-/sbin/agetty --autologin ainux --noclear %I $TERM
 AUTOLOGIN
+
+cat <<'GDMCONF' > /etc/gdm3/custom.conf
+[daemon]
+AutomaticLoginEnable=true
+AutomaticLogin=ainux
+
+[security]
+
+[xdmcp]
+
+[chooser]
+
+[debug]
+Enable=false
+GDMCONF
+
+mkdir -p /etc/dconf/profile
+cat <<'DPROFILE' > /etc/dconf/profile/gdm
+user-db:user
+system-db:gdm
+DPROFILE
+cat <<'UPROFILE' > /etc/dconf/profile/user
+user-db:user
+system-db:local
+UPROFILE
+
+mkdir -p /etc/dconf/db/gdm.d
+cat <<'GDMBG' > /etc/dconf/db/gdm.d/00-ainux-background
+[org/gnome/desktop/background]
+picture-uri='file:///usr/share/backgrounds/ainux/ainux.png'
+picture-uri-dark='file:///usr/share/backgrounds/ainux/ainux.png'
+primary-color='#0A1324'
+secondary-color='#0A1324'
+GDMBG
+
+cat <<'OSRELEASE' > /etc/os-release
+NAME="Ainux"
+VERSION="22.04 LTS (Jammy)"
+ID=ainux
+ID_LIKE=ubuntu
+PRETTY_NAME="Ainux 22.04 LTS (Jammy)"
+VERSION_ID="22.04"
+HOME_URL="https://ainux.example.com"
+SUPPORT_URL="https://ainux.example.com/support"
+BUG_REPORT_URL="https://ainux.example.com/issues"
+PRIVACY_POLICY_URL="https://ainux.example.com/privacy"
+VERSION_CODENAME=jammy
+UBUNTU_CODENAME=jammy
+OSRELEASE
+
+cat <<'LSBRELEASE' > /etc/lsb-release
+DISTRIB_ID=Ainux
+DISTRIB_RELEASE=22.04
+DISTRIB_CODENAME=jammy
+DISTRIB_DESCRIPTION="Ainux 22.04 LTS (Jammy)"
+LSBRELEASE
+
+cat <<'ISSUE' > /etc/issue
+Ainux 22.04 LTS (Jammy) \n \l
+ISSUE
+printf 'Ainux 22.04 LTS (Jammy)\n' > /etc/issue.net
 
 mkdir -p /home/ainux/.config/ainux
 cat <<'PROFILE' > /home/ainux/.config/ainux/profile.yaml
@@ -106,6 +183,8 @@ PYTHONPATH="/usr/local/lib/ainux:${PYTHONPATH:-}" exec python3 -m ainux_ai "$@"
 AINUXCLIENT
   chmod +x /usr/local/bin/ainux-client
   ln -sf ainux-client /usr/local/bin/ainux-ai-chat
+  ln -sf /usr/local/bin/ainux-client /home/ainux/ainux-client
+  chown ainux:ainux /home/ainux/ainux-client
   rm -rf /tmp/ainux_ai
 fi
 
@@ -115,6 +194,114 @@ if [[ -d /tmp/ainux_branding ]]; then
   chmod 644 /usr/share/ainux/branding/*.png 2>/dev/null || true
   rm -rf /tmp/ainux_branding
 fi
+
+PYTHONPATH="/usr/local/lib/ainux:${PYTHONPATH:-}" python3 - <<'PY'
+import base64
+from pathlib import Path
+
+from ainux_ai.ui import assets
+
+background_dir = Path("/usr/share/backgrounds/ainux")
+background_dir.mkdir(parents=True, exist_ok=True)
+
+icon_sizes = [64, 128, 256, 512]
+icon_root = Path("/usr/share/icons/hicolor")
+
+sources = {
+    "ainux.png": assets.DEFAULT_AINUX_LOGO_BASE64,
+    "ainux_penguin.png": assets.DEFAULT_AINUX_PENGUIN_BASE64,
+}
+
+for filename, b64_data in sources.items():
+    data = base64.b64decode(b64_data)
+    target = background_dir / filename
+    if not target.exists():
+        target.write_bytes(data)
+
+    if filename == "ainux.png":
+        default_wallpaper = Path("/usr/share/backgrounds/ainux_default.png")
+        if not default_wallpaper.exists():
+            default_wallpaper.write_bytes(data)
+
+    for size in icon_sizes:
+        icon_dir = icon_root / f"{size}x{size}" / "apps"
+        icon_dir.mkdir(parents=True, exist_ok=True)
+        icon_path = icon_dir / "ainux.png"
+        if not icon_path.exists():
+            icon_path.write_bytes(data)
+
+symbolic_dir = icon_root / "scalable" / "apps"
+symbolic_dir.mkdir(parents=True, exist_ok=True)
+symbolic_icon = symbolic_dir / "ainux.svg"
+if not symbolic_icon.exists():
+    symbolic_icon.write_text(
+        """<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'>\n"
+        "  <rect width='128' height='128' rx='28' fill='#0A1324'/>\n"
+        "  <path d='M64 22c-20 0-36 16-36 36s16 36 36 36 36-16 36-36S84 22 64 22zm0 8c15.5 0 28 12.5 28 28s-12.5 28-28 28S36 73.5 36 58 48.5 30 64 30z' fill='#7BDCF7'/>\n"
+        "  <circle cx='52' cy='54' r='6' fill='white'/>\n"
+        "  <circle cx='76' cy='54' r='6' fill='white'/>\n"
+        "  <circle cx='52' cy='54' r='2.5' fill='#0A1324'/>\n"
+        "  <circle cx='76' cy='54' r='2.5' fill='#0A1324'/>\n"
+        "  <path d='M64 70c-8 0-15 4-18 10 6 6 12 9 18 9s12-3 18-9c-3-6-10-10-18-10z' fill='#F5A623'/>\n"
+        "</svg>\n"",
+        encoding="utf-8",
+    )
+PY
+
+mkdir -p /etc/dconf/db/local.d
+cat <<'LOCALDCONF' > /etc/dconf/db/local.d/00-ainux-desktop
+[org/gnome/desktop/background]
+picture-uri='file:///usr/share/backgrounds/ainux/ainux.png'
+picture-uri-dark='file:///usr/share/backgrounds/ainux/ainux.png'
+primary-color='#0A1324'
+secondary-color='#0A1324'
+
+[org/gnome/desktop/screensaver]
+picture-uri='file:///usr/share/backgrounds/ainux/ainux.png'
+
+[org/gnome/shell]
+favorite-apps=['firefox.desktop','org.gnome.Terminal.desktop','ainux-studio.desktop']
+
+[org/gnome/desktop/interface]
+color-scheme='prefer-dark'
+gtk-theme='Yaru-dark'
+icon-theme='Yaru'
+cursor-theme='Yaru'
+enable-animations=true
+
+[org/gnome/settings-daemon/plugins/power]
+sleep-inactive-ac-timeout=0
+sleep-inactive-ac-type='nothing'
+LOCALDCONF
+
+dconf update
+
+gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null || true
+
+cat <<'DESKTOP' > /usr/share/applications/ainux-studio.desktop
+[Desktop Entry]
+Type=Application
+Name=Ainux Studio
+Comment=Launch the AI-native orchestration studio
+Exec=/usr/local/bin/ainux-client ui
+Icon=ainux
+Terminal=false
+Categories=Utility;Development;
+StartupNotify=true
+DESKTOP
+
+install -d /home/ainux/.config/autostart
+cat <<'AUTOSTART' > /home/ainux/.config/autostart/ainux-studio.desktop
+[Desktop Entry]
+Type=Application
+Name=Ainux Studio
+Comment=Launch the AI-native orchestration studio
+Exec=/usr/local/bin/ainux-client ui
+Icon=ainux
+Terminal=false
+X-GNOME-Autostart-enabled=true
+AUTOSTART
+chown -R ainux:ainux /home/ainux/.config/autostart
 
 if [[ ! -f /home/ainux/.config/ainux/context_fabric.json ]]; then
   PYTHONPATH="/usr/local/lib/ainux:${PYTHONPATH:-}" python3 - <<'PY'
@@ -136,7 +323,7 @@ fi
 # Configure motd
 cat <<'MOTD' > /etc/update-motd.d/99-ainux
 #!/bin/sh
-echo "Welcome to Ainux - the AI-native Ubuntu remix"
+echo "Welcome to Ainux - the AI-native operating system"
 MOTD
 chmod +x /etc/update-motd.d/99-ainux
 

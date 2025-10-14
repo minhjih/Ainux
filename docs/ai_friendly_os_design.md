@@ -67,10 +67,11 @@ those tasks autonomously while keeping the user in control.
      live progress updates.
 - **현재 구현:** 글래스모피즘 스타일의 웹 스튜디오가 자연어 타임라인, 계획 카드,
   실행 로그, 컨텍스트 패브릭 이벤트를 동시에 보여 주며 토글로 드라이런/오프라인
-  모드를 제어할 수 있다. 0.7 업데이트에서는 정사각형 Ainux 로고와 펭귄 마스코트를
-  히어로 배경/마스코트 패널에 배치하여 브랜드 일관성을 확보했고, `/usr/share/ainux/branding`
-  경로의 이미지를 교체하면 테마가 바로 반영되도록 구성했다. 음성 입력, 다중 세션,
-  협업 뷰는 추후 계획이다.
+  모드를 제어할 수 있다. 0.8 업데이트에서는 정사각형 Ainux 로고와 펭귄 마스코트를
+  히어로 배경·데스크톱 배경·마스코트 패널에 배치해 브랜드 일관성을 강화하고,
+  GNOME 세션/로그인 매니저에서도 동일한 브랜딩과 자동 로그인을 제공한다.
+  `/usr/share/ainux/branding` 경로의 이미지를 교체하면 테마가 즉시 반영된다.
+  음성 입력, 다중 세션, 협업 뷰는 추후 계획이다.
 
 ## Intelligent Hardware & Runtime Management
 - **Hardware intent abstraction**: Users can request high-level goals such as

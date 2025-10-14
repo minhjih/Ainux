@@ -19,6 +19,8 @@ that demonstrates those ideas.
   scheduling, and network automation helpers.
 - `ainux_ai/` – Python GPT client, 자연어 오케스트레이터, 컨텍스트 패브릭, 지능형
   하드웨어 자동화 툴킷, 그리고 OpenAI 호환 API와 통신하는 CLI.
+- `folder/` – (선택) ISO 빌드 시 반영할 Ainux 로고·펭귄 PNG를 담아두는 디렉터리.
+  존재하지 않아도 빌드가 가능하며, 이미지가 없으면 내장 기본 브랜딩이 사용됩니다.
 
 ## Quick Start
 
@@ -67,6 +69,11 @@ sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64 --output ~/ainu
 > 툴킷은 `?` 접두사로 표시되어 있어, 해당 패키지를 제공하지 않는 아키텍처/미러에서도
 > 빌드가 중단되지 않고 자동으로 건너뜁니다. GPU가 없는 노트북이나 ARM 포트 미러에서도
 > 안심하고 ISO를 생성할 수 있습니다.
+
+> 🧩 **커널 헤더 확보:** DKMS 기반 드라이버(예: NVIDIA)는 빌드 과정에서 현재 커널의
+> 헤더가 필요합니다. `packages.txt`에 `linux-generic` 메타 패키지를 포함해 항상 최신
+> 커널 이미지와 헤더가 함께 설치되도록 했으므로, `cleaning build area...(bad exit status: 2)`와
+> 같은 헤더 누락 오류 없이 모듈이 컴파일됩니다.
 
 > 🪄 **라이브 부팅 보조 패키지:** 일부 지역 미러(특히 ARM 전용 ports 미러)는 `lupin-casper`
 > 패키지를 제공하지 않습니다. `build.sh`는 이 패키지를 옵션으로 간주하여 존재할 때만 설치를
@@ -144,6 +151,24 @@ AINUX_GPT_API_KEY=sk-... AINUX_GPT_MODEL=gpt-4o-mini ./ainux-client chat --messa
 Inside the live ISO the `ainux` user can run `ainux-client chat --interactive`
 to hold multi-turn conversations, switch between multiple saved providers, and
 log transcripts for auditing (the legacy `ainux-ai-chat` alias still works).
+`ainux-client` is installed at `/usr/local/bin` and the build also places a
+`~/ainux-client` symlink, so both `ainux-client` and `./ainux-client` work out of
+the box in the live session.
+
+## 데스크톱 경험
+
+- ISO에는 이제 `ubuntu-desktop-minimal` 기반의 GNOME 환경이 포함되어 있어 바로 GUI로
+  부팅할 수 있습니다. GDM은 `ainux` 사용자를 자동 로그인시키고, 세션 시작과 함께
+  Ainux Studio(자연어 오케스트레이션 UI)를 실행합니다.
+- `/etc/os-release`, `/etc/issue`, 기본 호스트네임, MOTD를 비롯한 텍스트 자산이 모두
+  Ainux 브랜딩으로 업데이트되었으므로, 콘솔 프롬프트도 `ainux@ainux` 형태로 표시됩니다.
+- GNOME 배경/잠금 화면은 `/usr/share/backgrounds/ainux/`에 설치된 로고·펭귄 이미지를
+  사용하며, 동일 이미지를 아이콘 테마에도 배포하여 앱 런처 및 즐겨찾기에 적용했습니다.
+- 리포지토리 루트의 `folder/ainux.png`, `folder/ainux_penguin.png` 파일을 추가하면 해당
+  이미지를 자동 반영하고, 파일이 없을 경우 파이썬 패키지에 내장된 기본 아트워크가
+  사용됩니다.
+- 전원 관리 기본값은 라이브 세션 데모를 돕기 위해 절전 기능을 꺼 둔 상태이며, 즐겨찾기
+  앱은 Firefox, GNOME Terminal, Ainux Studio로 초기화되어 있습니다.
 
 ## 자연어 오케스트레이션 사용하기
 
@@ -259,8 +284,8 @@ log transcripts for auditing (the legacy `ainux-ai-chat` alias still works).
 ## 브라우저 오케스트레이션 스튜디오
 
 터미널만으로는 자연어 흐름과 실행 로그를 한눈에 보기 어렵기 때문에,
-`ainux_ai.ui` 패키지는 글래스모피즘 테마의 웹 UI를 제공합니다. 0.7 릴리스
-에서는 정사각형 Ainux 로고와 펭귄 마스코트를 애플리케이션에 내장(base64)
+`ainux_ai.ui` 패키지는 글래스모피즘 테마의 웹 UI를 제공합니다. 0.8 릴리스
+에서는 정사각형 Ainux 로고와 펭귄 마스코트를 애플리케이션과 데스크톱 환경에 내장(base64)
 해 기본 브랜드 경험을 제공합니다. 저장소에는 바이너리 자산을 포함하지
 않으므로, 필요하다면 루트 `folder/` 디렉터리에 동일한 파일명(`ainux.png`,
 `ainux_penguin.png`)으로 로컬 이미지를 두거나, ISO 부팅 후 `/usr/share/ainux/branding`
