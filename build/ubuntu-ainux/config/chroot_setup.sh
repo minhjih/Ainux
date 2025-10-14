@@ -37,7 +37,7 @@ CLOUD
 # Create the default Ainux orchestrator user
 if ! id -u ainux >/dev/null 2>&1; then
   useradd -m -s /bin/bash ainux
-  echo "ainux:ainux" | chpasswd
+  echo "ainux:ainuxos" | chpasswd
   usermod -aG sudo,adm,video,docker ainux || true
 fi
 
@@ -234,8 +234,8 @@ symbolic_dir = icon_root / "scalable" / "apps"
 symbolic_dir.mkdir(parents=True, exist_ok=True)
 symbolic_icon = symbolic_dir / "ainux.svg"
 if not symbolic_icon.exists():
-    symbolic_icon.write_text(
-        """<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'>\n"
+    svg_content = (
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'>\n"
         "  <rect width='128' height='128' rx='28' fill='#0A1324'/>\n"
         "  <path d='M64 22c-20 0-36 16-36 36s16 36 36 36 36-16 36-36S84 22 64 22zm0 8c15.5 0 28 12.5 28 28s-12.5 28-28 28S36 73.5 36 58 48.5 30 64 30z' fill='#7BDCF7'/>\n"
         "  <circle cx='52' cy='54' r='6' fill='white'/>\n"
@@ -243,9 +243,9 @@ if not symbolic_icon.exists():
         "  <circle cx='52' cy='54' r='2.5' fill='#0A1324'/>\n"
         "  <circle cx='76' cy='54' r='2.5' fill='#0A1324'/>\n"
         "  <path d='M64 70c-8 0-15 4-18 10 6 6 12 9 18 9s12-3 18-9c-3-6-10-10-18-10z' fill='#F5A623'/>\n"
-        "</svg>\n"",
-        encoding="utf-8",
+        "</svg>\n"
     )
+    symbolic_icon.write_text(svg_content, encoding="utf-8")
 PY
 
 mkdir -p /etc/dconf/db/local.d

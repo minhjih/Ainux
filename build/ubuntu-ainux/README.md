@@ -163,7 +163,7 @@ sudo dd if=~/ainux-jammy.iso of=/dev/sdX bs=4M status=progress && sync
 TTY에서 수동 로그인이 필요한 경우 기본 자격 증명은 아래와 같습니다.
 
 - 사용자 이름: `ainux`
-- 비밀번호: `ainux`
+- 비밀번호: `ainuxos`
 
 설치한 뒤에는 `passwd`로 비밀번호를 변경하거나, 새 운영자 계정을 생성해
 사용하는 것을 권장합니다.
