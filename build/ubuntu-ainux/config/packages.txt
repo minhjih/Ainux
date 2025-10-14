@@ -40,5 +40,6 @@ schedtool
 ?nvidia-cuda-toolkit
 ?nvidia-container-toolkit
 docker.io
+fuse-overlayfs
 slurm-client
 slurm-wlm-basic-plugins

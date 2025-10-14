@@ -80,6 +80,13 @@ sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64 --output ~/ainu
 > 않습니다. 방화벽 규칙을 활용하려면 ISO 부팅 후 `sudo apt-get install iptables-persistent`
 > 로 수동 설치하거나 `packages.txt`에서 `?` 접두사를 제거한 뒤 다시 빌드하세요.
 
+> 🐳 **Docker 저장소 드라이버 기본값:** 라이브 ISO 루트 파일시스템은 읽기 전용
+> SquashFS 위에 overlay로 구성되기 때문에, Docker가 기본 overlay2 드라이버를 검사할 때
+> "mapping" 오류가 발생할 수 있습니다. 이를 방지하기 위해 `fuse-overlayfs` 패키지를 함께
+> 설치하고 `/etc/docker/daemon.json`을 `fuse-overlayfs` 드라이버로 초기화하도록 변경했습니다.
+> 디스크에 설치한 뒤 overlay2로 되돌리고 싶다면 해당 파일을 수정하거나 삭제한 뒤
+> `sudo systemctl restart docker`를 실행하면 됩니다.
+
 > 🚧 **QEMU 세그멘테이션 폴트 대응:** 교차 아키텍처 빌드에서 `QEMU internal SIGSEGV`
 > 등의 메시지가 뜬 뒤 `apt-get: No such file or directory`가 이어진다면, 두 번째
 > debootstrap 단계가 정상적으로 종료되지 않은 상태입니다. 스크립트가 자동으로
@@ -95,6 +102,18 @@ sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64 --output ~/ainu
 Refer to `build/ubuntu-ainux/README.md` for prerequisites and customization
 options, including the new scheduling/packet-management blueprints seeded into
 the live image.
+
+### 라이브 세션 로그인 정보
+
+ISO를 부팅하면 콘솔 `tty1` 세션이 자동으로 `ainux` 사용자로 로그인됩니다.
+그래픽 로그인 매니저나 추가 TTY에서 수동으로 로그인해야 할 때를 대비해
+기본 자격 증명은 다음과 같습니다.
+
+- 사용자 이름: `ainux`
+- 비밀번호: `ainux`
+
+설치 후에는 `passwd` 명령으로 비밀번호를 즉시 변경하거나, 별도의 사용자
+계정을 생성해 사용하는 것을 권장합니다.
 
 ## Configuring GPT access
 

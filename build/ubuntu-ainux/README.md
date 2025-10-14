@@ -17,6 +17,9 @@ maintaining compatibility with upstream updates.
   particular architecture or mirror does not publish them.
 * Treats `iptables-persistent` as an optional package so hypervisors without
   netfilter modules (또는 미러에 패키지가 없는 경우)에서도 빌드가 멈추지 않습니다.
+* Configures Docker to default to the `fuse-overlayfs` storage driver so live
+  sessions on read-only media avoid overlay "mapping" errors while still
+  allowing installed systems to switch back to `overlay2` later.
 * Preloads infrastructure scheduling toolchain (SLURM clients, networking
   diagnostics, IPMI utilities) so AI agents can coordinate complex hardware
   operations out-of-the-box.
@@ -143,6 +146,18 @@ for bare-metal installation/testing:
 sudo dd if=~/ainux-jammy.iso of=/dev/sdX bs=4M status=progress && sync
 ```
 
+### 라이브 세션 접속 정보
+
+라이브 환경이 부팅되면 콘솔 `tty1`에서 `ainux` 계정으로 자동 로그인되도록
+`getty` 오버라이드를 구성해 두었습니다. 만약 그래픽 로그인 매니저나 다른
+TTY에서 수동 로그인이 필요한 경우 기본 자격 증명은 아래와 같습니다.
+
+- 사용자 이름: `ainux`
+- 비밀번호: `ainux`
+
+설치한 뒤에는 `passwd`로 비밀번호를 변경하거나, 새 운영자 계정을 생성해
+사용하는 것을 권장합니다.
+
 ## Extending the Build
 
 * **Additional Packages:** Add them to `config/packages.txt` (one per line).
@@ -154,6 +169,10 @@ sudo dd if=~/ainux-jammy.iso of=/dev/sdX bs=4M status=progress && sync
   라이브 부팅 단계에서 사용하는 `lupin-casper` 패키지도 ports 계열 미러에는 존재하지 않는
   경우가 많아, 스크립트가 자동으로 옵션 처리하고 있습니다. 패키지를 반드시 포함해야 한다면
   제공하는 미러를 사용하거나 ISO 생성 이후 수동으로 추가하세요.
+  라이브 세션에서 Docker가 overlay2 검사 중 실패하지 않도록 `fuse-overlayfs` 패키지를
+  기본 포함시키고 `/etc/docker/daemon.json`을 `fuse-overlayfs` 드라이버로 초기화합니다.
+  디스크에 설치한 후 overlay2로 변경하려면 해당 파일을 편집 또는 삭제한 뒤 Docker를
+  재시작하면 됩니다.
 * **Post-Install Logic:** Modify `config/chroot_setup.sh` to run extra commands
   inside the chroot. For complex flows consider invoking Ansible playbooks.
 * **Hardware Blueprints:** Place YAML or JSON templates inside `overlay/` or

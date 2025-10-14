@@ -25,6 +25,15 @@ if ! id -u ainux >/dev/null 2>&1; then
   usermod -aG sudo,adm,video,docker ainux || true
 fi
 
+# Auto-login the Ainux operator on the live console so users are not
+# prompted for credentials when booting the ISO in a VM or bare metal.
+mkdir -p /etc/systemd/system/getty@tty1.service.d
+cat <<'AUTOLOGIN' > /etc/systemd/system/getty@tty1.service.d/override.conf
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin ainux --noclear %I $TERM
+AUTOLOGIN
+
 mkdir -p /home/ainux/.config/ainux
 cat <<'PROFILE' > /home/ainux/.config/ainux/profile.yaml
 version: 1
@@ -70,6 +79,21 @@ alias ainux-orchestrate='ainux-ai-chat orchestrate'
 alias ainux-fabric='ainux-ai-chat context snapshot'
 alias ainux-ui='ainux-ai-chat ui'
 BASHRC
+
+# Configure Docker to run reliably on read-only live media by preferring
+# fuse-overlayfs. The configuration is skipped when a custom daemon.json
+# already exists so that installed systems can override the storage driver.
+mkdir -p /etc/docker
+if [[ ! -f /etc/docker/daemon.json ]]; then
+  cat <<'DOCKERCFG' > /etc/docker/daemon.json
+{
+  "storage-driver": "fuse-overlayfs",
+  "features": {
+    "buildkit": true
+  }
+}
+DOCKERCFG
+fi
 
 # Install the GPT client toolkit for shell and automation use
 if [[ -d /tmp/ainux_ai ]]; then
