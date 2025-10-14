@@ -1,0 +1,3 @@
+deb @UBUNTU_MIRROR@ jammy main restricted universe multiverse
+deb @UBUNTU_MIRROR@ jammy-updates main restricted universe multiverse
+deb @UBUNTU_MIRROR@ jammy-security main restricted universe multiverse

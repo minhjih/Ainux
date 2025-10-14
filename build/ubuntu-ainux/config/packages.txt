@@ -1,0 +1,60 @@
+# Core automation stack for Ainux Ubuntu remix
+# Prefix a package name with '?' to mark it optional. Optional packages are
+# attempted but skipped automatically if the archive does not provide them
+# (useful for GPU stacks on architectures without NVIDIA support).
+python3
+python3-pip
+python3-venv
+python3-yaml
+cloud-init
+ansible
+openssh-server
+git
+linux-generic
+htop
+jq
+curl
+wget
+ca-certificates
+ufw
+net-tools
+nftables
+?iptables-persistent
+bridge-utils
+ethtool
+lshw
+lsscsi
+smartmontools
+lvm2
+parted
+gdisk
+nvme-cli
+ipmitool
+lm-sensors
+stress-ng
+chrony
+nload
+iftop
+schedtool
+# Desktop environment for the Ainux operator experience
+ubuntu-desktop-minimal
+gdm3
+gnome-shell-extension-manager
+gnome-terminal
+firefox
+fonts-cantarell
+yaru-theme-gtk
+yaru-theme-icon
+yaru-theme-sound
+x11-xserver-utils
+dconf-cli
+# Icon theme helpers for branding overrides
+libgtk-3-bin
+# GPU enablement (optional; skipped automatically when unavailable)
+?nvidia-driver-535
+?nvidia-cuda-toolkit
+?nvidia-container-toolkit
+docker.io
+fuse-overlayfs
+slurm-client
+slurm-wlm-basic-plugins
