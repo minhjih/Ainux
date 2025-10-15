@@ -204,7 +204,7 @@ branding and defaults.
 1. Choose your language, keyboard layout, and timezone as usual.
 2. Select the destination disk/partition (NVMe, SATA, virtual disk, etc.).
 3. Proceed through the installer; the default `ainux` account is created with the
-   same `ainuxos` password seeded in the live session.
+   same `ainuxos8` password seeded in the live session.
 4. When prompted, remove the ISO/USB and reboot—GRUB will load the newly
    installed system directly from the internal disk.
 
@@ -225,7 +225,7 @@ behaviour.
 TTY에서 수동 로그인이 필요한 경우 기본 자격 증명은 아래와 같습니다.
 
 - 사용자 이름: `ainux`
-- 비밀번호: `ainuxos`
+- 비밀번호: `ainuxos8`
 
 설치한 뒤에는 `passwd`로 비밀번호를 변경하거나, 새 운영자 계정을 생성해
 사용하는 것을 권장합니다.

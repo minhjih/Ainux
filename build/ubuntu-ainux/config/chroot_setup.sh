@@ -63,7 +63,7 @@ CLOUD
 # Create the default Ainux orchestrator user
 if ! id -u ainux >/dev/null 2>&1; then
   useradd -m -s /bin/bash ainux
-  echo "ainux:ainuxos" | chpasswd
+  echo "ainux:ainuxos8" | chpasswd
   usermod -aG sudo,adm,video,docker ainux || true
 fi
 
@@ -373,7 +373,7 @@ AUTOSTART
 chown -R ainux:ainux /home/ainux/.config/autostart
 
 install -d /home/ainux/Desktop
-cat <<'INSTALLDESKTOP' > /home/ainux/Desktop/Install Ainux.desktop
+cat <<'INSTALLDESKTOP' > "/home/ainux/Desktop/Install Ainux.desktop"
 [Desktop Entry]
 Type=Application
 Name=Install Ainux
