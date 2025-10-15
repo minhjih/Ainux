@@ -130,8 +130,9 @@ If debootstrap reports `Failure while configuring required packages`, the
 second stage aborted while configuring the base system. The build script now
 bind-mounts `/proc`, `/sys`, and `/dev` automatically and preserves the full
 log at `work/debootstrap.log` (even when the run fails) so you can inspect the
-exact package that stopped the process. Re-run with `--keep-work` for further
-analysis if needed.
+exact package that stopped the process. The `work/` directory is preserved by
+default, so you can inspect the chroot immediately; use `--clean-work` when you
+want to discard it and start again.
 
 You must execute the build as `root` (or via `sudo`) because debootstrap and the
 ISO generation steps require elevated privileges.
@@ -196,10 +197,17 @@ interrupted. Expect status lines such as `[bootstrap]`, `[overlay]`, and
 `[squashfs]` as each phase completes.
 
 The script creates a `work/` directory containing the debootstrap chroot and ISO
-staging tree. By default the directory is removed on success, but the final
-artifacts (`output/ainux-...iso` and any `--disk-image` you requested) live
-outside `work/` and are preserved. Pass `--keep-work` if you want to inspect the
-intermediate artifacts.
+staging tree. That directory is now preserved by default so you can resume
+failed builds (for example, after freeing disk space) or inspect the generated
+filesystem. When you want to start from scratch, pass `--clean-work` or remove
+`build/ubuntu-ainux/work/` manually before rerunning the script. Final artifacts
+(`output/ainux-...iso` and any optional `--disk-image`) live outside `work/` and
+are never deleted automatically.
+
+The builder also records hashes for the package manifest and chroot setup script
+so it can skip re-running those expensive steps when neither file has changed.
+If you modify `packages.txt` or `config/chroot_setup.sh`, the script detects the
+new hash automatically and reinstalls the relevant components on the next run.
 
 The resulting ISO can be booted in a virtual machine or written to a USB drive
 for bare-metal installation/testing:

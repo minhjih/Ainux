@@ -45,7 +45,9 @@ sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64
 > `AINUX_ALLOW_BUILD=1` is present. When set correctly you will see progress
 > messages such as `[bootstrap]`, `[overlay]`, and `[live]`. If the build later
 > halts, review `/tmp/ainux-build.log` (created automatically) for the failing
-> command or rerun with `--keep-work` to inspect the generated chroot.
+> command or inspect the preserved `work/` directory (kept by default). Use
+> `--clean-work` when you want to discard previous bootstrap artefacts and
+> start fresh.
 
 빌드가 성공하면 ISO는 항상 리포지토리 최상위의 `output/` 디렉터리에
 `ainux-<release>-<arch>.iso` 이름으로 저장됩니다(예: `output/ainux-jammy-amd64.iso`).
@@ -57,6 +59,13 @@ sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64
 > 필요한 용량과 현재 남은 용량을 안내합니다. 오류가 발생했다면 저장소를 다른
 > 디스크로 옮기거나 `--output` 옵션으로 충분한 공간이 있는 위치를 지정한 뒤 다시
 > 실행하세요.
+
+> ♻️ **재시도 가속화:** `build.sh`는 각 주요 단계를 기록해 두었다가 동일한
+> 릴리스·아키텍처·패키지 구성이 감지되면 debootstrap과 대규모 패키지 설치를 다시
+> 수행하지 않고 건너뜁니다. ISO 조립 단계에서만 실패했다면, 공간을 확보한 뒤
+> 다시 실행해도 앞선 부트스트랩 결과를 그대로 재사용합니다. 완전 초기화가
+> 필요할 때는 `--clean-work`를 지정하거나 `build/ubuntu-ainux/work/`를 수동으로
+> 삭제하세요.
 
 ### 라이브 ISO에서 NVMe/SSD에 설치하기
 
@@ -160,7 +169,8 @@ RAW 이미지는 GPT 파티션(512MiB EFI + 나머지 루트), `UUID` 기반 `fs
 > 🛠️ **패키지 설정 실패 대응:** `Failure while configuring required packages` 같은
 > 메시지가 출력되면 debootstrap 두 번째 단계에서 기본 패키지 설정이 멈춘
 > 것입니다. 스크립트가 `/proc`, `/sys`, `/dev` 등을 자동 마운트하고 실패 시
-> `work/debootstrap.log`를 보존하므로, 로그를 확인하거나 `--keep-work`로 다시
+> `work/debootstrap.log`를 보존하므로, 로그를 확인한 뒤 필요하다면
+> `--clean-work` 옵션으로 완전 초기화하여 다시 시도할 수 있습니다.
 > 실행해 문제 패키지를 진단하세요.
 
 Refer to `build/ubuntu-ainux/README.md` for prerequisites and customization

@@ -49,6 +49,9 @@ OVERLAY_DIR="$SCRIPT_DIR/overlay"
 AI_CLIENT_DIR="$REPO_ROOT/ainux_ai"
 BRANDING_DIR="$REPO_ROOT/folder"
 EFI_STAGING_DIR="$WORK_DIR/efi"
+METADATA_FILE="$WORK_DIR/.build-meta"
+STAGE_DIR="$WORK_DIR/.stages"
+KEEP_WORK=1
 DISK_IMAGE_PATH=""
 DISK_IMAGE_SIZE="16G"
 OUTPUT_PATH=""
@@ -83,7 +86,8 @@ Options:
   -o, --output <path>              Output ISO path (default: <repo>/output/ainux-<release>-<arch>.iso)
   --disk-image <path>              Optional raw disk image output path
   --disk-size <size>               Size for disk image (default: $DISK_IMAGE_SIZE)
-  -k, --keep-work                  Keep working directories after completion
+  -c, --clean-work                 Remove working directories after completion (default: keep)
+      --keep-work                  Deprecated alias; working directories are kept by default
   -h, --help                       Show this help message
 USAGE
 }
@@ -144,6 +148,87 @@ cleanup() {
   else
     echo "[cleanup] Keeping work directory at: $WORK_DIR"
   fi
+}
+
+stage_marker_path() {
+  local stage="$1"
+  echo "$STAGE_DIR/$stage"
+}
+
+mark_stage() {
+  local stage="$1"
+  local metadata="${2:-}"
+  mkdir -p "$STAGE_DIR"
+  printf '%s\n' "$metadata" > "$(stage_marker_path "$stage")"
+}
+
+clear_stage() {
+  local stage="$1"
+  local path
+  path="$(stage_marker_path "$stage")"
+  if [[ -f "$path" ]]; then
+    rm -f "$path"
+  fi
+}
+
+read_stage_metadata() {
+  local stage="$1"
+  local path
+  path="$(stage_marker_path "$stage")"
+  if [[ -f "$path" ]]; then
+    cat "$path"
+  fi
+}
+
+should_skip_stage() {
+  local stage="$1"
+  local expected="${2:-}"
+  local current
+  current="$(read_stage_metadata "$stage")"
+  if [[ -z "$current" ]]; then
+    return 1
+  fi
+  if [[ "$current" == "$expected" ]]; then
+    echo "[resume] Stage '$stage' already satisfied (metadata match); skipping"
+    return 0
+  fi
+  echo "[resume] Stage '$stage' metadata changed (expected '$expected', found '$current'); rerunning"
+  return 1
+}
+
+validate_existing_metadata() {
+  if [[ ${KEEP_WORK:-0} -eq 0 ]]; then
+    return
+  fi
+  if [[ ! -f "$METADATA_FILE" ]]; then
+    return
+  fi
+  local stored_release=""
+  local stored_arch=""
+  while IFS='=' read -r key value; do
+    case "$key" in
+      release) stored_release="$value" ;;
+      arch) stored_arch="$value" ;;
+    esac
+  done < "$METADATA_FILE"
+  if [[ -n "$stored_release" && "$stored_release" != "$RELEASE" ]]; then
+    echo "[resume] Existing work directory targets release '$stored_release'. Use --clean-work or remove $WORK_DIR for a fresh build." >&2
+    exit 1
+  fi
+  if [[ -n "$stored_arch" && "$stored_arch" != "$ARCH" ]]; then
+    echo "[resume] Existing work directory targets architecture '$stored_arch'. Use --clean-work or remove $WORK_DIR for a fresh build." >&2
+    exit 1
+  fi
+}
+
+ensure_build_metadata() {
+  mkdir -p "$WORK_DIR"
+  cat > "$METADATA_FILE" <<EOF
+release=$RELEASE
+arch=$ARCH
+timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
+  mkdir -p "$STAGE_DIR"
 }
 
 normalize_arch() {
@@ -271,7 +356,10 @@ check_dependencies() {
 }
 
 prepare_directories() {
-  mkdir -p "$ROOTFS_DIR" "$ISO_DIR" "$EFI_STAGING_DIR"
+  if [[ ${KEEP_WORK:-0} -eq 0 ]]; then
+    sudo rm -rf "$WORK_DIR"
+  fi
+  mkdir -p "$ROOTFS_DIR" "$ISO_DIR" "$EFI_STAGING_DIR" "$STAGE_DIR"
 }
 
 sync_resolv_conf() {
@@ -362,6 +450,21 @@ run_foreign_second_stage() {
 
 bootstrap_base() {
   echo "[bootstrap] Running debootstrap for $RELEASE/$ARCH"
+  local stage_meta="release=$RELEASE arch=$ARCH"
+  if should_skip_stage "bootstrap" "$stage_meta"; then
+    if [[ -f "$ROOTFS_DIR/etc/os-release" ]]; then
+      return
+    fi
+    echo "[resume] Bootstrap marker present but root filesystem is missing; rebuilding" >&2
+    clear_stage "bootstrap"
+    clear_stage "packages"
+    clear_stage "chroot-script"
+  fi
+  if [[ -d "$ROOTFS_DIR" && -n "$(ls -A "$ROOTFS_DIR" 2>/dev/null)" ]]; then
+    echo "[resume] Root filesystem at $ROOTFS_DIR already exists without a matching stage marker." >&2
+    echo "[resume] Use --clean-work or remove the directory to rebuild from scratch." >&2
+    exit 1
+  fi
   if [[ $USE_FOREIGN_STAGE -eq 1 ]]; then
     echo "[bootstrap] Host architecture ($HOST_ARCH) differs from target ($ARCH); using foreign bootstrap"
     sudo debootstrap --arch="$ARCH" --foreign "$RELEASE" "$ROOTFS_DIR" "$MIRROR"
@@ -379,6 +482,7 @@ bootstrap_base() {
   else
     sudo debootstrap --arch="$ARCH" "$RELEASE" "$ROOTFS_DIR" "$MIRROR"
   fi
+  mark_stage "bootstrap" "$stage_meta"
 }
 
 copy_overlay() {
@@ -404,9 +508,22 @@ configure_apt() {
 }
 
 install_packages() {
+  local pkg_hash="none"
   if [[ -f "$PACKAGES_FILE" ]]; then
-    echo "[packages] Installing additional packages"
-    sudo tee "$ROOTFS_DIR/tmp/install_packages.sh" >/dev/null <<'INSTALLPKG'
+    pkg_hash="$(sha256sum "$PACKAGES_FILE" | awk '{print $1}')"
+  fi
+  local stage_meta="hash=$pkg_hash"
+  if should_skip_stage "packages" "$stage_meta"; then
+    return
+  fi
+  if [[ ! -f "$PACKAGES_FILE" ]]; then
+    echo "[packages] No additional packages requested; skipping"
+    mark_stage "packages" "$stage_meta"
+    return
+  fi
+
+  echo "[packages] Installing additional packages"
+  sudo tee "$ROOTFS_DIR/tmp/install_packages.sh" >/dev/null <<'INSTALLPKG'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -438,18 +555,30 @@ done < /tmp/packages.txt
 
 /usr/bin/apt-get clean
 INSTALLPKG
-    sudo chmod +x "$ROOTFS_DIR/tmp/install_packages.sh"
-    sudo chroot "$ROOTFS_DIR" /tmp/install_packages.sh
-    sudo rm -f "$ROOTFS_DIR/tmp/install_packages.sh" "$ROOTFS_DIR/tmp/packages.txt"
-  fi
+  sudo chmod +x "$ROOTFS_DIR/tmp/install_packages.sh"
+  sudo chroot "$ROOTFS_DIR" /tmp/install_packages.sh
+  sudo rm -f "$ROOTFS_DIR/tmp/install_packages.sh" "$ROOTFS_DIR/tmp/packages.txt"
+  mark_stage "packages" "$stage_meta"
 }
 
 run_chroot_script() {
+  local script_hash="none"
   if [[ -f "$CHROOT_SCRIPT" ]]; then
-    echo "[chroot] Executing custom chroot setup script"
-    sudo chroot "$ROOTFS_DIR" /usr/bin/env bash -c "/tmp/chroot_setup.sh"
-    sudo rm -f "$ROOTFS_DIR/tmp/chroot_setup.sh"
+    script_hash="$(sha256sum "$CHROOT_SCRIPT" | awk '{print $1}')"
   fi
+  local stage_meta="hash=$script_hash"
+  if should_skip_stage "chroot-script" "$stage_meta"; then
+    return
+  fi
+  if [[ ! -f "$CHROOT_SCRIPT" ]]; then
+    echo "[chroot] No custom chroot setup script provided; skipping"
+    mark_stage "chroot-script" "$stage_meta"
+    return
+  fi
+  echo "[chroot] Executing custom chroot setup script"
+  sudo chroot "$ROOTFS_DIR" /usr/bin/env bash -c "/tmp/chroot_setup.sh"
+  sudo rm -f "$ROOTFS_DIR/tmp/chroot_setup.sh"
+  mark_stage "chroot-script" "$stage_meta"
 }
 
 generate_efi_bootloader() {
@@ -873,7 +1002,10 @@ main() {
         DISK_IMAGE_PATH="$2"; shift 2 ;;
       --disk-size)
         DISK_IMAGE_SIZE="$2"; shift 2 ;;
+      -c|--clean-work)
+        KEEP_WORK=0; shift ;;
       -k|--keep-work)
+        echo "[warn] --keep-work is the default behaviour; flag retained for compatibility" >&2
         KEEP_WORK=1; shift ;;
       -h|--help)
         usage; exit 0 ;;
@@ -909,9 +1041,11 @@ main() {
   fi
   mkdir -p "$(dirname "$OUTPUT_PATH")"
 
+  validate_existing_metadata
   determine_efi_target
   check_dependencies
   prepare_directories
+  ensure_build_metadata
   bootstrap_base
   seed_configuration_files
   prepare_chroot_env
