@@ -49,7 +49,12 @@ OVERLAY_DIR="$SCRIPT_DIR/overlay"
 AI_CLIENT_DIR="$REPO_ROOT/ainux_ai"
 BRANDING_DIR="$REPO_ROOT/folder"
 EFI_STAGING_DIR="$WORK_DIR/efi"
+DISK_IMAGE_PATH=""
+DISK_IMAGE_SIZE="16G"
 CHROOT_MOUNTED=0
+declare -a LOOP_DEVICES=()
+declare -a DISK_MOUNTS=()
+declare -a DISK_MOUNT_REMOVE=()
 
 EFI_GRUB_TARGET=""
 EFI_BOOT_FILENAME=""
@@ -63,6 +68,7 @@ FOREIGN_QEMU_BASENAME=""
 PACKAGES_FILE="$CONFIG_DIR/packages.txt"
 CHROOT_SCRIPT="$CONFIG_DIR/chroot_setup.sh"
 GRUB_CFG_FILE="$CONFIG_DIR/grub.cfg"
+LIVE_KERNEL_PARAMS="boot=casper quiet splash usbcore.autosuspend=-1 ---"
 
 usage() {
   cat <<USAGE
@@ -74,6 +80,8 @@ Options:
   -m, --mirror <url>               Ubuntu mirror URL (default: auto)
   -l, --label <label>              ISO label (default: $ISO_LABEL)
   -o, --output <path>              Output ISO path (default: ./ainux-<release>-<arch>.iso)
+  --disk-image <path>              Optional raw disk image output path
+  --disk-size <size>               Size for disk image (default: $DISK_IMAGE_SIZE)
   -k, --keep-work                  Keep working directories after completion
   -h, --help                       Show this help message
 USAGE
@@ -105,6 +113,27 @@ cleanup() {
     cleanup_chroot_env
   fi
   remove_foreign_qemu_helper || true
+  if (( ${#DISK_MOUNTS[@]} )); then
+    for (( idx=${#DISK_MOUNTS[@]}-1; idx>=0; idx-- )); do
+      local mount_point="${DISK_MOUNTS[$idx]}"
+      local remove_dir="${DISK_MOUNT_REMOVE[$idx]}"
+      if [[ -n "$mount_point" && -d "$mount_point" ]]; then
+        if mountpoint -q "$mount_point"; then
+          sudo umount -lf "$mount_point" || true
+        fi
+        if [[ "$remove_dir" == "1" ]]; then
+          sudo rmdir "$mount_point" 2>/dev/null || true
+        fi
+      fi
+    done
+  fi
+  if (( ${#LOOP_DEVICES[@]} )); then
+    for loopdev in "${LOOP_DEVICES[@]}"; do
+      if [[ -n "$loopdev" ]] && losetup "$loopdev" >/dev/null 2>&1; then
+        sudo losetup -d "$loopdev" || true
+      fi
+    done
+  fi
   if [[ -d "$EFI_STAGING_DIR" && ${KEEP_WORK:-0} -eq 0 ]]; then
     sudo rm -rf "$EFI_STAGING_DIR"
   fi
@@ -130,6 +159,22 @@ normalize_arch() {
     *)
       echo "$value" ;;
   esac
+}
+
+register_loop_device() {
+  local loopdev="$1"
+  if [[ -n "$loopdev" ]]; then
+    LOOP_DEVICES+=("$loopdev")
+  fi
+}
+
+register_mount_point() {
+  local mount_point="$1"
+  local remove_dir="${2:-0}"
+  if [[ -n "$mount_point" ]]; then
+    DISK_MOUNTS+=("$mount_point")
+    DISK_MOUNT_REMOVE+=("$remove_dir")
+  fi
 }
 
 default_mirror_for_arch() {
@@ -182,6 +227,15 @@ check_dependencies() {
     fi
   done
 
+  if [[ -n "$DISK_IMAGE_PATH" ]]; then
+    local disk_cmds=(parted losetup mkfs.ext4 blkid)
+    for dep in "${disk_cmds[@]}"; do
+      if ! command -v "$dep" >/dev/null 2>&1; then
+        missing+=("$dep")
+      fi
+    done
+  fi
+
   local isolinux_bin="/usr/lib/ISOLINUX/isolinux.bin"
   local ldlinux_c32="/usr/lib/syslinux/modules/bios/ldlinux.c32"
   if [[ ! -f "$isolinux_bin" ]]; then
@@ -204,6 +258,9 @@ check_dependencies() {
     echo "[error] Missing build dependencies:" >&2
     printf '  - %s\n' "${missing[@]}" >&2
     local hint_pkgs="debootstrap squashfs-tools xorriso isolinux mtools dosfstools rsync"
+    if [[ -n "$DISK_IMAGE_PATH" ]]; then
+      hint_pkgs+=" parted e2fsprogs util-linux"
+    fi
     if [[ $USE_FOREIGN_STAGE -eq 1 ]]; then
       hint_pkgs+=" qemu-user-static binfmt-support"
     fi
@@ -402,13 +459,13 @@ generate_efi_bootloader() {
 
   echo "[efi] Generating GRUB EFI binary inside chroot"
   local tmp_cfg="$ROOTFS_DIR/tmp/iso-grub.cfg"
-  sudo tee "$tmp_cfg" >/dev/null <<'GRUB'
+  sudo tee "$tmp_cfg" >/dev/null <<GRUB
 set default=0
 set timeout=5
 
 menuentry "Ainux Live" {
     search --file --set=root /casper/vmlinuz
-    linux /casper/vmlinuz boot=casper quiet splash ---
+    linux /casper/vmlinuz $LIVE_KERNEL_PARAMS
     initrd /casper/initrd
 }
 GRUB
@@ -502,19 +559,19 @@ prepare_iso_structure() {
   if [[ -f "$GRUB_CFG_FILE" ]]; then
     sudo cp "$GRUB_CFG_FILE" "$ISO_DIR/boot/grub/grub.cfg"
   else
-    cat <<'GRUBCFG' | sudo tee "$ISO_DIR/boot/grub/grub.cfg" >/dev/null
+    cat <<GRUBCFG | sudo tee "$ISO_DIR/boot/grub/grub.cfg" >/dev/null
 set default=0
 set timeout=5
 
 menuentry "Ainux Live" {
     set gfxpayload=keep
-    linux   /casper/vmlinuz boot=casper quiet splash ---
+    linux   /casper/vmlinuz $LIVE_KERNEL_PARAMS
     initrd  /casper/initrd
 }
 GRUBCFG
   fi
 
-  cat <<'ISOCFG' | sudo tee "$ISO_DIR/isolinux/isolinux.cfg" >/dev/null
+  cat <<ISOCFG | sudo tee "$ISO_DIR/isolinux/isolinux.cfg" >/dev/null
 UI vesamenu.c32
 PROMPT 0
 MENU TITLE Ainux Live ISO
@@ -523,7 +580,7 @@ TIMEOUT 50
 LABEL live
   menu label ^Try Ainux without installing
   kernel /casper/vmlinuz
-  append initrd=/casper/initrd boot=casper quiet splash ---
+  append initrd=/casper/initrd $LIVE_KERNEL_PARAMS
 ISOCFG
 }
 
@@ -574,6 +631,149 @@ create_md5sum() {
   (cd "$ISO_DIR" && sudo find . -type f -print0 | sudo xargs -0 md5sum) | sudo tee "$ISO_DIR/md5sum.txt" >/dev/null
 }
 
+create_disk_image() {
+  if [[ -z "$DISK_IMAGE_PATH" ]]; then
+    return
+  fi
+
+  local output_path="$DISK_IMAGE_PATH"
+  echo "[disk] Building raw disk image at $output_path ($DISK_IMAGE_SIZE)"
+  sudo mkdir -p "$(dirname "$output_path")"
+  sudo rm -f "$output_path"
+  sudo truncate -s "$DISK_IMAGE_SIZE" "$output_path"
+
+  echo "[disk] Partitioning disk image"
+  sudo parted -s "$output_path" mklabel gpt
+  sudo parted -s "$output_path" mkpart ESP fat32 1MiB 513MiB
+  sudo parted -s "$output_path" set 1 boot on
+  sudo parted -s "$output_path" set 1 esp on
+  sudo parted -s "$output_path" mkpart primary ext4 513MiB 100%
+
+  local loopdev
+  loopdev=$(sudo losetup --find --show --partscan "$output_path")
+  register_loop_device "$loopdev"
+  sudo partprobe "$loopdev" >/dev/null 2>&1 || true
+  sleep 1
+
+  local part1="${loopdev}p1"
+  local part2="${loopdev}p2"
+  if [[ ! -e "$part1" && -e "${loopdev}p01" ]]; then
+    part1="${loopdev}p01"
+  fi
+  if [[ ! -e "$part2" && -e "${loopdev}p02" ]]; then
+    part2="${loopdev}p02"
+  fi
+  if [[ ! -e "$part1" || ! -e "$part2" ]]; then
+    echo "[error] Unable to locate loop partitions for $loopdev" >&2
+    exit 1
+  fi
+
+  echo "[disk] Formatting EFI ($part1) and root ($part2) partitions"
+  sudo mkfs.vfat -F 32 "$part1" >/dev/null
+  sudo mkfs.ext4 -F "$part2" >/dev/null
+
+  local root_mount
+  root_mount="$(mktemp -d)"
+  sudo mount "$part2" "$root_mount"
+  register_mount_point "$root_mount" 1
+  sudo mkdir -p "$root_mount/boot/efi"
+  sudo mount "$part1" "$root_mount/boot/efi"
+  register_mount_point "$root_mount/boot/efi" 0
+
+  echo "[disk] Syncing root filesystem into disk image"
+  sudo rsync -aHAX --delete "$ROOTFS_DIR"/ "$root_mount"/
+
+  local root_uuid efi_uuid
+  root_uuid="$(sudo blkid -s UUID -o value "$part2")"
+  efi_uuid="$(sudo blkid -s UUID -o value "$part1")"
+  if [[ -n "$root_uuid" && -n "$efi_uuid" ]]; then
+    sudo tee "$root_mount/etc/fstab" >/dev/null <<FSTAB
+UUID=$root_uuid / ext4 defaults 0 1
+UUID=$efi_uuid /boot/efi vfat umask=0077 0 1
+FSTAB
+  fi
+
+  sudo truncate -s0 "$root_mount/etc/machine-id"
+  sudo touch "$root_mount/etc/machine-id"
+
+  echo "[disk] Installing bootloader inside disk image"
+  local bind
+  for bind in dev dev/pts proc sys run; do
+    sudo mount --bind "/$bind" "$root_mount/$bind"
+    register_mount_point "$root_mount/$bind" 0
+  done
+
+  local grub_pkgs=()
+  case "$ARCH" in
+    amd64)
+      grub_pkgs=(grub-efi-amd64-signed shim-signed grub-pc)
+      ;;
+    arm64)
+      grub_pkgs=(grub-efi-arm64-signed shim-signed)
+      ;;
+    *)
+      grub_pkgs=("grub-efi-$ARCH")
+      ;;
+  esac
+
+  if (( ${#grub_pkgs[@]} )); then
+    local install_needed=()
+    local pkg
+    for pkg in "${grub_pkgs[@]}"; do
+      if ! sudo chroot "$root_mount" dpkg -s "$pkg" >/dev/null 2>&1; then
+        install_needed+=("$pkg")
+      fi
+    done
+    if (( ${#install_needed[@]} )); then
+      sudo chroot "$root_mount" /usr/bin/apt-get update
+      if ! sudo chroot "$root_mount" /usr/bin/apt-get install -y "${install_needed[@]}"; then
+        echo "[warn] Failed to install GRUB packages (${install_needed[*]}) inside disk image; continuing" >&2
+      fi
+    fi
+  fi
+
+  case "$ARCH" in
+    amd64)
+      sudo chroot "$root_mount" grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Ainux --recheck
+      sudo chroot "$root_mount" grub-install --target=i386-pc --recheck "$loopdev" || true
+      ;;
+    arm64)
+      sudo chroot "$root_mount" grub-install --target=arm64-efi --efi-directory=/boot/efi --bootloader-id=Ainux --recheck
+      ;;
+    *)
+      sudo chroot "$root_mount" grub-install --efi-directory=/boot/efi --bootloader-id=Ainux --recheck || true
+      ;;
+  esac
+  sudo chroot "$root_mount" update-grub
+
+  # Tear down mounts so the image file can be attached immediately
+  if (( ${#DISK_MOUNTS[@]} )); then
+    for (( idx=${#DISK_MOUNTS[@]}-1; idx>=0; idx-- )); do
+      local mount_point="${DISK_MOUNTS[$idx]}"
+      local remove_dir="${DISK_MOUNT_REMOVE[$idx]}"
+      if [[ -n "$mount_point" && -d "$mount_point" ]]; then
+        if mountpoint -q "$mount_point"; then
+          sudo umount -lf "$mount_point" || true
+        fi
+        if [[ "$remove_dir" == "1" ]]; then
+          sudo rmdir "$mount_point" 2>/dev/null || true
+        fi
+      fi
+    done
+  fi
+  DISK_MOUNTS=()
+  DISK_MOUNT_REMOVE=()
+
+  if [[ -n "$loopdev" ]]; then
+    if losetup "$loopdev" >/dev/null 2>&1; then
+      sudo losetup -d "$loopdev" || true
+    fi
+  fi
+  LOOP_DEVICES=()
+
+  echo "[disk] Disk image ready: $output_path"
+}
+
 assemble_iso() {
   local output_iso="${OUTPUT_PATH:-$(pwd)/ainux-$RELEASE-$ARCH.iso}"
   echo "[iso] Building ISO at $output_iso"
@@ -615,6 +815,10 @@ main() {
         ISO_LABEL="$2"; shift 2 ;;
       -o|--output)
         OUTPUT_PATH="$2"; shift 2 ;;
+      --disk-image)
+        DISK_IMAGE_PATH="$2"; shift 2 ;;
+      --disk-size)
+        DISK_IMAGE_SIZE="$2"; shift 2 ;;
       -k|--keep-work)
         KEEP_WORK=1; shift ;;
       -h|--help)
@@ -662,6 +866,7 @@ main() {
   create_squashfs
   create_efi_image
   create_md5sum
+  create_disk_image
   assemble_iso
 }
 

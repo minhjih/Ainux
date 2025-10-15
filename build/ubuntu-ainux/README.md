@@ -23,9 +23,22 @@ maintaining compatibility with upstream updates.
 * Installs the `ubuntu-desktop-minimal` GNOME session, enables GDM auto-login for
   the `ainux` user, and autostarts the browser-based Ainux Studio so the live ISO
   immediately feels like a desktop OS rather than a server shell.
+* Forces Netplan to use the NetworkManager renderer and bundles
+  `open-vm-tools-desktop` so VMware/VirtualBox/QEMU guests obtain networking
+  automatically without manual configuration.
 * Replaces Ubuntu branding with Ainux identity across `/etc/os-release`,
   `/etc/issue`, MOTD, GNOME backgrounds, icons, and the login greeter so prompts
-  and UI surfaces display `ainux` instead of `ubuntu`.
+  and UI surfaces display `ainux` instead of `ubuntu`. Branding assets pulled
+  from `folder/ainux.png` and `folder/ainux_penguin.png` are copied into the ISO
+  and become the default wallpaper, lock screen, icons, and studio imagery; the
+  same files dropped into `/usr/share/ainux/branding` on a running system take
+  effect immediately.
+* Adds a persistent hostname service so casper-based live boots and fresh
+  installs always present themselves as `ainux`, keeping the shell prompt and
+  display manager on-brand.
+* Injects `usbcore.autosuspend=-1` into the live kernel command line and the
+  installed system's GRUB defaults to suppress VMware "usb 2-1" descriptor
+  errors reported on shutdown or reboot.
 * Configures Docker to default to the `fuse-overlayfs` storage driver so live
   sessions on read-only media avoid overlay "mapping" errors while still
   allowing installed systems to switch back to `overlay2` later.
@@ -44,6 +57,9 @@ maintaining compatibility with upstream updates.
   language conversations, plans, and execution logs side-by-side.
 * Hardened SSH configuration and MOTD branding.
 * Generates both GRUB and ISOLINUX boot loaders for BIOS/UEFI compatibility.
+* (Optional) Builds a raw GPT disk image (`--disk-image`) with EFI/BIOS GRUB,
+  UUID-based `fstab`, and all Ainux tooling preinstalled so NVMe/SSD targets or
+  VM disks boot straight into Ainux without appearing as a removable ISO.
 
 ## Prerequisites
 
@@ -54,6 +70,13 @@ packages installed:
 sudo apt-get update
 sudo apt-get install -y debootstrap squashfs-tools xorriso isolinux \
   mtools dosfstools rsync
+```
+
+If you plan to create a raw disk image via `--disk-image`, also install tools
+for partitioning and filesystem creation:
+
+```bash
+sudo apt-get install -y parted e2fsprogs util-linux
 ```
 
 The build script now generates the GRUB EFI binary from inside the Ubuntu
@@ -138,6 +161,17 @@ other files that should be injected into the root filesystem verbatim.
 ```bash
 cd build/ubuntu-ainux
 sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64 --output ~/ainux-jammy.iso
+```
+
+To generate a bootable raw disk (ideal for NVMe passthrough or VM disks) at the
+same time, pass `--disk-image` and optionally `--disk-size`:
+
+```bash
+sudo AINUX_ALLOW_BUILD=1 ./build.sh \
+  --release jammy --arch amd64 \
+  --output ~/ainux-jammy.iso \
+  --disk-image ~/ainux-jammy.img \
+  --disk-size 16G
 ```
 
 The script streams all output to `/tmp/ainux-build.log` (override with

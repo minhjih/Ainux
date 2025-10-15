@@ -19,6 +19,32 @@ enable_service ssh.service
 enable_service ufw.service
 enable_service gdm3.service
 
+# Ensure NetworkManager owns all interfaces and seed predictable netplan
+# defaults so DHCP works in hypervisors like VMware out of the box.
+mkdir -p /etc/netplan
+cat <<'NETPLAN' > /etc/netplan/01-ainux-network.yaml
+network:
+  version: 2
+  renderer: NetworkManager
+NETPLAN
+netplan generate >/dev/null 2>&1 || true
+
+# Guarantee the hostname is corrected on every boot (casper can reset it)
+cat <<'HOSTSERVICE' > /etc/systemd/system/ainux-hostname.service
+[Unit]
+Description=Persist the Ainux hostname during live boots
+After=systemd-remount-fs.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/hostnamectl set-hostname ainux
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+HOSTSERVICE
+enable_service ainux-hostname.service
+
 # Ensure the live environment consistently presents the Ainux identity.
 echo "ainux" > /etc/hostname
 if grep -q '^127\.0\.1\.1' /etc/hosts; then
@@ -78,8 +104,8 @@ UPROFILE
 mkdir -p /etc/dconf/db/gdm.d
 cat <<'GDMBG' > /etc/dconf/db/gdm.d/00-ainux-background
 [org/gnome/desktop/background]
-picture-uri='file:///usr/share/backgrounds/ainux/ainux.png'
-picture-uri-dark='file:///usr/share/backgrounds/ainux/ainux.png'
+picture-uri='file:///usr/share/ainux/branding/ainux.png'
+picture-uri-dark='file:///usr/share/ainux/branding/ainux.png'
 primary-color='#0A1324'
 secondary-color='#0A1324'
 GDMBG
@@ -110,6 +136,10 @@ cat <<'ISSUE' > /etc/issue
 Ainux 22.04 LTS (Jammy) \n \l
 ISSUE
 printf 'Ainux 22.04 LTS (Jammy)\n' > /etc/issue.net
+
+if [[ -f /etc/default/grub ]]; then
+  sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash usbcore.autosuspend=-1"/' /etc/default/grub
+fi
 
 mkdir -p /home/ainux/.config/ainux
 cat <<'PROFILE' > /home/ainux/.config/ainux/profile.yaml
@@ -201,6 +231,9 @@ from pathlib import Path
 
 from ainux_ai.ui import assets
 
+branding_dir = Path("/usr/share/ainux/branding")
+branding_dir.mkdir(parents=True, exist_ok=True)
+
 background_dir = Path("/usr/share/backgrounds/ainux")
 background_dir.mkdir(parents=True, exist_ok=True)
 
@@ -212,23 +245,30 @@ sources = {
     "ainux_penguin.png": assets.DEFAULT_AINUX_PENGUIN_BASE64,
 }
 
+def resolve_asset(name: str, fallback_b64: str) -> bytes:
+    override = branding_dir / name
+    if override.exists():
+        return override.read_bytes()
+    data = base64.b64decode(fallback_b64)
+    if not override.exists():
+        override.write_bytes(data)
+    return data
+
 for filename, b64_data in sources.items():
-    data = base64.b64decode(b64_data)
+    data = resolve_asset(filename, b64_data)
+
     target = background_dir / filename
-    if not target.exists():
-        target.write_bytes(data)
+    target.write_bytes(data)
 
     if filename == "ainux.png":
         default_wallpaper = Path("/usr/share/backgrounds/ainux_default.png")
-        if not default_wallpaper.exists():
-            default_wallpaper.write_bytes(data)
+        default_wallpaper.write_bytes(data)
 
     for size in icon_sizes:
         icon_dir = icon_root / f"{size}x{size}" / "apps"
         icon_dir.mkdir(parents=True, exist_ok=True)
         icon_path = icon_dir / "ainux.png"
-        if not icon_path.exists():
-            icon_path.write_bytes(data)
+        icon_path.write_bytes(data)
 
 symbolic_dir = icon_root / "scalable" / "apps"
 symbolic_dir.mkdir(parents=True, exist_ok=True)
@@ -251,8 +291,8 @@ PY
 mkdir -p /etc/dconf/db/local.d
 cat <<'LOCALDCONF' > /etc/dconf/db/local.d/00-ainux-desktop
 [org/gnome/desktop/background]
-picture-uri='file:///usr/share/backgrounds/ainux/ainux.png'
-picture-uri-dark='file:///usr/share/backgrounds/ainux/ainux.png'
+picture-uri='file:///usr/share/ainux/branding/ainux.png'
+picture-uri-dark='file:///usr/share/ainux/branding/ainux.png'
 primary-color='#0A1324'
 secondary-color='#0A1324'
 

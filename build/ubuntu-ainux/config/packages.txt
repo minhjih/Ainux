@@ -42,6 +42,7 @@ gdm3
 gnome-shell-extension-manager
 gnome-terminal
 firefox
+open-vm-tools-desktop
 fonts-cantarell
 yaru-theme-gtk
 yaru-theme-icon

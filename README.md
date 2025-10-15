@@ -47,6 +47,29 @@ sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64 --output ~/ainu
 > halts, review `/tmp/ainux-build.log` (created automatically) for the failing
 > command or rerun with `--keep-work` to inspect the generated chroot.
 
+### NVMe/가상 디스크용 RAW 이미지 생성
+
+ISO는 언제나 "광학" 장치(가상 CD/DVD)로 인식되므로, 하드 디스크에 직접 설치한
+뒤에도 USB/ISO 부팅처럼 보일 수 있습니다. 이를 보완하기 위해 `build.sh`에
+`--disk-image` 옵션을 추가하여 NVMe/SSD에 바로 쓸 수 있는 **RAW 디스크 이미지**를
+동시에 만들 수 있습니다. 예시는 다음과 같습니다.
+
+```bash
+sudo AINUX_ALLOW_BUILD=1 ./build.sh \
+  --release jammy --arch amd64 \
+  --output ~/ainux-jammy.iso \
+  --disk-image ~/ainux-jammy.img \
+  --disk-size 16G
+```
+
+- `.iso`는 계속해서 라이브 세션·설치 매체로 활용할 수 있고,
+- `.img`는 `qemu-img convert`, `dd`, `virt-install --disk`, VMware/VirtualBox의
+  가상 NVMe 디스크 등에 그대로 연결하면 됩니다.
+
+RAW 이미지는 GPT 파티션(512MiB EFI + 나머지 루트), `UUID` 기반 `fstab`, GRUB EFI/BIOS
+부트로더를 포함하도록 자동 구성되므로, VM이나 실제 NVMe 장치에 배포하면 바로
+내장 디스크에서 부팅됩니다.
+
 > 🧠 **Cross-architecture builds:** When the host CPU architecture (e.g. `amd64`)
 > differs from the target passed via `--arch` (e.g. `arm64`), install
 > `qemu-user-static` and `binfmt-support` in addition to the standard ISO tools.
@@ -288,8 +311,10 @@ the box in the live session.
 에서는 정사각형 Ainux 로고와 펭귄 마스코트를 애플리케이션과 데스크톱 환경에 내장(base64)
 해 기본 브랜드 경험을 제공합니다. 저장소에는 바이너리 자산을 포함하지
 않으므로, 필요하다면 루트 `folder/` 디렉터리에 동일한 파일명(`ainux.png`,
-`ainux_penguin.png`)으로 로컬 이미지를 두거나, ISO 부팅 후 `/usr/share/ainux/branding`
-에 PNG를 배치해 교체할 수 있습니다. 로컬 서버를 띄우면 브라우저 상단에서
+`ainux_penguin.png`)으로 로컬 이미지를 두면 빌드 스크립트가 ISO에 포함시켜
+배경화면·아이콘·GDM 로그인 화면까지 한 번에 교체합니다. ISO 부팅 후
+`/usr/share/ainux/branding`에 PNG를 배치해도 즉시 동일한 효과를 얻을 수
+있습니다. 로컬 서버를 띄우면 브라우저 상단에서
 로고가 은은하게 반복되며, 펭귄 캐릭터가 타임라인 패널과
 실행 로그 카드로 이어지는 경험을 시각적으로 안내합니다. 좌측 패널은 대화형
 자연어 타임라인을, 우측 패널은 계획·명령 로그·컨텍스트 패브릭 메타데이터를
@@ -309,9 +334,9 @@ the box in the live session.
 UI 내 토글을 통해 드라이런/실행, 오프라인 모드, 컨텍스트 패브릭 사용 여부를
 즉시 바꿀 수 있으며, 프롬프트 제출 시 오케스트레이터 결과와 계획 단계, 실행
 출력, 최신 패브릭 이벤트가 카드 형태로 정리됩니다. 헤더의 브랜드 배지는
-현재 제공자·실행 모드를 뱃지 형태로 보여주고, 하단 히어로 배경은 내장
-이미지를 사용하되 `/usr/share/ainux/branding` 혹은 로컬 `folder/` 자산을
-교체하면 곧바로 바뀝니다. GPT 제공자가 설정되지 않았거나
+현재 제공자·실행 모드를 뱃지 형태로 보여주고, 하단 히어로 배경은
+`/usr/share/ainux/branding` 이미지를 직접 사용하므로 로컬 `folder/`
+자산만 교체해도 곧바로 바뀝니다. GPT 제공자가 설정되지 않았거나
 오류가 발생하면 경고 배지가 표시되고 휴리스틱 모드로 자동 폴백합니다.
 
 ## Current Status
@@ -340,12 +365,20 @@ VM에서는 다음과 같은 특징을 기대할 수 있습니다.
 - **GPT & 오케스트레이션** – API 키를 설정하면 자연어 오케스트레이션,
   컨텍스트 패브릭, 하드웨어/네트워크/스케줄링 명령이 모두 동일하게 동작하고,
   키를 설정하지 않으면 휴리스틱 모드로 안전하게 폴백합니다.
+- **네트워크 즉시 연결** – Netplan 기본 렌더러를 NetworkManager로 설정하고
+  `open-vm-tools-desktop`를 번들링하여 VMware·VirtualBox 등에서 DHCP가 곧바로
+  동작합니다. 네트워크가 비활성화된 경우 `sudo systemctl restart NetworkManager`
+  혹은 VM 네트워크 어댑터 재연결만으로 복구됩니다.
 - **하드웨어 자동화** – VM에서는 PCI/센서 정보가 제한되므로 스캔 결과가
   비어 있을 수 있지만, 카탈로그 관리·의존성 계산·텔레메트리 수집은
   시뮬레이션 데이터로 수행되어 워크플로우를 검증할 수 있습니다.
 - **브라우저 스튜디오** – `./ainux-client ui --host 0.0.0.0`를 실행하면
   VM 내부 브라우저 혹은 포트 포워딩을 통해 호스트 브라우저에서 동일한 UI를
   사용할 수 있습니다.
+- **USB 안정화 & 호스트명 유지** – 커널 부팅 파라미터에 `usbcore.autosuspend=-1`
+  을 추가하여 VMware에서 보고된 `usb 2-1` 오류를 억제하고, 전용 systemd
+  서비스가 부팅 때마다 호스트명을 `ainux`로 재설정해 쉘 프롬프트와 GDM
+  배너가 항상 Ainux 브랜드로 표시됩니다.
 
 현재 저장소는 요청하신 자동화 기능(자연어 오케스트레이션, 컨텍스트 패브릭,
 지능형 하드웨어 자동화, 스케줄러/네트워크/클러스터 명령, 브랜드 UI)을 모두
