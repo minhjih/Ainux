@@ -163,11 +163,17 @@ other files that should be injected into the root filesystem verbatim.
 
 ```bash
 cd build/ubuntu-ainux
-sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64 --output ~/ainux-jammy.iso
+sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64
 ```
 
-To generate a bootable raw disk (ideal for NVMe passthrough or VM disks) at the
-same time, pass `--disk-image` and optionally `--disk-size`:
+By default the resulting ISO is written to `../output/ainux-<release>-<arch>.iso`
+relative to the repository root (e.g. `output/ainux-jammy-amd64.iso`). Use the
+`--output` flag if you prefer a different location.
+
+The build always produces the ISO alone so low-storage hosts are not forced to
+provision large raw disks. When you explicitly want a bootable raw disk (ideal
+for NVMe passthrough or VM disks) pass `--disk-image` and optionally
+`--disk-size`:
 
 ```bash
 sudo AINUX_ALLOW_BUILD=1 ./build.sh \
@@ -183,14 +189,16 @@ interrupted. Expect status lines such as `[bootstrap]`, `[overlay]`, and
 `[squashfs]` as each phase completes.
 
 The script creates a `work/` directory containing the debootstrap chroot and ISO
-staging tree. By default the directory is removed on success. Pass `--keep-work`
-if you want to inspect the intermediate artifacts.
+staging tree. By default the directory is removed on success, but the final
+artifacts (`output/ainux-...iso` and any `--disk-image` you requested) live
+outside `work/` and are preserved. Pass `--keep-work` if you want to inspect the
+intermediate artifacts.
 
 The resulting ISO can be booted in a virtual machine or written to a USB drive
 for bare-metal installation/testing:
 
 ```bash
-sudo dd if=~/ainux-jammy.iso of=/dev/sdX bs=4M status=progress && sync
+sudo dd if=../../output/ainux-jammy-amd64.iso of=/dev/sdX bs=4M status=progress && sync
 ```
 
 ### Installing onto NVMe/SSD from the live session

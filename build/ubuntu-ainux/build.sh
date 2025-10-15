@@ -51,6 +51,7 @@ BRANDING_DIR="$REPO_ROOT/folder"
 EFI_STAGING_DIR="$WORK_DIR/efi"
 DISK_IMAGE_PATH=""
 DISK_IMAGE_SIZE="16G"
+OUTPUT_PATH=""
 CHROOT_MOUNTED=0
 declare -a LOOP_DEVICES=()
 declare -a DISK_MOUNTS=()
@@ -79,7 +80,7 @@ Options:
   -a, --arch <architecture>        Target architecture (default: $ARCH)
   -m, --mirror <url>               Ubuntu mirror URL (default: auto)
   -l, --label <label>              ISO label (default: $ISO_LABEL)
-  -o, --output <path>              Output ISO path (default: ./ainux-<release>-<arch>.iso)
+  -o, --output <path>              Output ISO path (default: <repo>/output/ainux-<release>-<arch>.iso)
   --disk-image <path>              Optional raw disk image output path
   --disk-size <size>               Size for disk image (default: $DISK_IMAGE_SIZE)
   -k, --keep-work                  Keep working directories after completion
@@ -633,6 +634,7 @@ create_md5sum() {
 
 create_disk_image() {
   if [[ -z "$DISK_IMAGE_PATH" ]]; then
+    echo "[disk] Skipping raw disk image creation (not requested)"
     return
   fi
 
@@ -775,7 +777,7 @@ FSTAB
 }
 
 assemble_iso() {
-  local output_iso="${OUTPUT_PATH:-$(pwd)/ainux-$RELEASE-$ARCH.iso}"
+  local output_iso="$OUTPUT_PATH"
   echo "[iso] Building ISO at $output_iso"
   local isohdpfx="/usr/lib/ISOLINUX/isohdpfx.bin"
   local isohybrid_args=()
@@ -845,6 +847,15 @@ main() {
   else
     echo "[mirror] Using custom mirror: $MIRROR"
   fi
+
+  local default_iso_path="$REPO_ROOT/output/ainux-$RELEASE-$ARCH.iso"
+  if [[ -z "$OUTPUT_PATH" ]]; then
+    OUTPUT_PATH="$default_iso_path"
+    echo "[output] Default ISO output path: $OUTPUT_PATH"
+  else
+    echo "[output] Custom ISO output path: $OUTPUT_PATH"
+  fi
+  mkdir -p "$(dirname "$OUTPUT_PATH")"
 
   determine_efi_target
   check_dependencies

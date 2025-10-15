@@ -38,7 +38,7 @@ To continue once you are in a safe environment:
 ```bash
 git clone https://github.com/<your-org>/Ainux.git
 cd Ainux/build/ubuntu-ainux
-sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64 --output ~/ainux-jammy.iso
+sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64
 ```
 
 > ℹ️ **Troubleshooting:** The safety gate aborts early unless
@@ -46,6 +46,10 @@ sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64 --output ~/ainu
 > messages such as `[bootstrap]`, `[overlay]`, and `[live]`. If the build later
 > halts, review `/tmp/ainux-build.log` (created automatically) for the failing
 > command or rerun with `--keep-work` to inspect the generated chroot.
+
+빌드가 성공하면 ISO는 항상 리포지토리 최상위의 `output/` 디렉터리에
+`ainux-<release>-<arch>.iso` 이름으로 저장됩니다(예: `output/ainux-jammy-amd64.iso`).
+별도의 경로로 내보내고 싶다면 `--output` 플래그를 지정하면 됩니다.
 
 ### 라이브 ISO에서 NVMe/SSD에 설치하기
 
@@ -72,9 +76,10 @@ Ainux ISO는 Ubuntu 라이브 세션과 동일한 방식으로 부팅되지만, 
 ### NVMe/가상 디스크용 RAW 이미지 생성
 
 ISO는 언제나 "광학" 장치(가상 CD/DVD)로 인식되므로, 하드 디스크에 직접 설치한
-뒤에도 USB/ISO 부팅처럼 보일 수 있습니다. 이를 보완하기 위해 `build.sh`에
-`--disk-image` 옵션을 추가하여 NVMe/SSD에 바로 쓸 수 있는 **RAW 디스크 이미지**를
-동시에 만들 수 있습니다. 예시는 다음과 같습니다.
+뒤에도 USB/ISO 부팅처럼 보일 수 있습니다. 이러한 경우를 대비해 `build.sh`에는
+필요한 경우에만 사용하는 `--disk-image` 옵션이 준비되어 있습니다. 기본 설정에서는
+추가 디스크 이미지를 생성하지 않으므로 여유 공간이 부족한 시스템에서도 ISO 빌드만
+진행할 수 있습니다. RAW 이미지를 함께 만들고 싶다면 다음과 같이 실행하세요.
 
 ```bash
 sudo AINUX_ALLOW_BUILD=1 ./build.sh \
