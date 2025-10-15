@@ -57,6 +57,9 @@ maintaining compatibility with upstream updates.
   language conversations, plans, and execution logs side-by-side.
 * Hardened SSH configuration and MOTD branding.
 * Generates both GRUB and ISOLINUX boot loaders for BIOS/UEFI compatibility.
+* (Optional) Builds a raw GPT disk image (`--disk-image`) with EFI/BIOS GRUB,
+  UUID-based `fstab`, and all Ainux tooling preinstalled so NVMe/SSD targets or
+  VM disks boot straight into Ainux without appearing as a removable ISO.
 
 ## Prerequisites
 
@@ -67,6 +70,13 @@ packages installed:
 sudo apt-get update
 sudo apt-get install -y debootstrap squashfs-tools xorriso isolinux \
   mtools dosfstools rsync
+```
+
+If you plan to create a raw disk image via `--disk-image`, also install tools
+for partitioning and filesystem creation:
+
+```bash
+sudo apt-get install -y parted e2fsprogs util-linux
 ```
 
 The build script now generates the GRUB EFI binary from inside the Ubuntu
@@ -151,6 +161,17 @@ other files that should be injected into the root filesystem verbatim.
 ```bash
 cd build/ubuntu-ainux
 sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64 --output ~/ainux-jammy.iso
+```
+
+To generate a bootable raw disk (ideal for NVMe passthrough or VM disks) at the
+same time, pass `--disk-image` and optionally `--disk-size`:
+
+```bash
+sudo AINUX_ALLOW_BUILD=1 ./build.sh \
+  --release jammy --arch amd64 \
+  --output ~/ainux-jammy.iso \
+  --disk-image ~/ainux-jammy.img \
+  --disk-size 16G
 ```
 
 The script streams all output to `/tmp/ainux-build.log` (override with

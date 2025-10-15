@@ -43,6 +43,29 @@ sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64 --output ~/ainu
 > halts, review `/tmp/ainux-build.log` (created automatically) for the failing
 > command or rerun with `--keep-work` to inspect the generated chroot.
 
+### NVMe/가상 디스크용 RAW 이미지 생성
+
+ISO는 언제나 "광학" 장치(가상 CD/DVD)로 인식되므로, 하드 디스크에 직접 설치한
+뒤에도 USB/ISO 부팅처럼 보일 수 있습니다. 이를 보완하기 위해 `build.sh`에
+`--disk-image` 옵션을 추가하여 NVMe/SSD에 바로 쓸 수 있는 **RAW 디스크 이미지**를
+동시에 만들 수 있습니다. 예시는 다음과 같습니다.
+
+```bash
+sudo AINUX_ALLOW_BUILD=1 ./build.sh \
+  --release jammy --arch amd64 \
+  --output ~/ainux-jammy.iso \
+  --disk-image ~/ainux-jammy.img \
+  --disk-size 16G
+```
+
+- `.iso`는 계속해서 라이브 세션·설치 매체로 활용할 수 있고,
+- `.img`는 `qemu-img convert`, `dd`, `virt-install --disk`, VMware/VirtualBox의
+  가상 NVMe 디스크 등에 그대로 연결하면 됩니다.
+
+RAW 이미지는 GPT 파티션(512MiB EFI + 나머지 루트), `UUID` 기반 `fstab`, GRUB EFI/BIOS
+부트로더를 포함하도록 자동 구성되므로, VM이나 실제 NVMe 장치에 배포하면 바로
+내장 디스크에서 부팅됩니다.
+
 > 🧠 **Cross-architecture builds:** When the host CPU architecture (e.g. `amd64`)
 > differs from the target passed via `--arch` (e.g. `arm64`), install
 > `qemu-user-static` and `binfmt-support` in addition to the standard ISO tools.
