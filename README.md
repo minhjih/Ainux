@@ -121,10 +121,16 @@ RAW 이미지는 GPT 파티션(512MiB EFI + 나머지 루트), `UUID` 기반 `fs
 > appropriate QEMU static binary. Without those packages debootstrap will fail
 > with errors such as `Failure trying to run: chroot ... /bin/true`.
 
-> 🌐 **arm64 미러 기본값:** `arm64` (또는 기타 ARM 타깃)으로 빌드하면 스크립트가 자동으로
-> `http://ports.ubuntu.com/ubuntu-ports` 미러를 선택합니다. 아시아(특히 한국) 지역에서는
-> 이 포트 미러가 가장 안정적으로 패키지를 내려받으므로 별도 설정 없이도 빠르게 빌드할 수
-> 있습니다. 다른 거울을 사용하려면 `--mirror` 옵션으로 URL을 명시하세요.
+> 🌐 **arm64 미러 기본값 & 폴백:** `arm64`(또는 기타 ARM 타깃)으로 빌드하면 먼저
+> `http://ports.ubuntu.com/ubuntu-ports`가 사용되지만, 네트워크 오류나 타임아웃이 발생하면
+> `kr.archive.ubuntu.com`, `mirror.kakao.com` 등의 일반 Ubuntu 미러를 자동으로 차례대로 시도합니다.
+> 이러한 후보들은 `sources.list`에도 함께 기록되어, 빌드가 진행되는 동안 추가 다운로드가 필요할
+> 때 자동으로 다른 미러를 참조합니다. 직접 미러를 고정하고 싶다면 `--mirror` 옵션을 사용하세요.
+
+> ♻️ **네트워크 타임아웃 자동 재시도:** `build.sh`가 chroot 내부에 `Acquire::Retries`와
+> `Acquire::http::Timeout` 설정을 포함한 APT 구성 파일을 배치하므로, 일시적인 연결 끊김이나
+> 느린 응답이 있더라도 패키지 다운로드를 여러 번 재시도합니다. IPv6 연결이 불안정한 환경을
+> 대비해 `ForceIPv4` 옵션도 기본 활성화되어 있습니다.
 
 > 📡 **DNS 확인:** chroot 내부에서 패키지를 내려받을 때 호스트의 `/etc/resolv.conf`를
 > 그대로 복사하여 사용합니다. 만약 호스트가 커스텀 DNS를 쓰거나 VPN/프록시 환경에 있다면

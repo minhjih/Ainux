@@ -100,11 +100,16 @@ and then triggers the second stage inside the chroot. Skipping these packages
 leads to debootstrap errors such as `Failure trying to run: chroot ... /bin/true`
 because the host kernel cannot execute the target architecture binaries.
 
-> 🌐 **ARM 타깃 기본 미러:** `--arch arm64`(또는 `armhf`/`armel`)로 빌드하면 스크립트가
-> `http://ports.ubuntu.com/ubuntu-ports` 미러를 자동 선택합니다. 해당 미러는
-> 아시아, 특히 한국에서 가장 안정적으로 ARM 패키지를 제공하므로 추가 설정 없이도
-> 빠르게 이미지를 구성할 수 있습니다. 필요 시 `--mirror` 옵션으로 원하는 URL을
-> 지정하면 즉시 덮어쓸 수 있습니다.
+> 🌐 **ARM 타깃 기본 미러 & 폴백:** `--arch arm64`(또는 `armhf`/`armel`)로 빌드하면 먼저
+> `http://ports.ubuntu.com/ubuntu-ports` 미러를 사용합니다. 다운로드 타임아웃이나 연결 실패가
+> 반복되면 `kr.archive.ubuntu.com`, `mirror.kakao.com`, `ftp.harukasan.org` 등으로 자동 재시도하며,
+> 이러한 후보는 `sources.list`에도 함께 기록돼 이후 패키지 설치 단계에서도 자연스럽게 폴백됩니다.
+> 특정 미러만 사용하고 싶다면 `--mirror` 옵션으로 명시하세요.
+
+> ♻️ **APT 재시도 구성:** chroot 내부에는 `Acquire::Retries`, `Acquire::http::Timeout`,
+> `Acquire::ForceIPv4` 등을 포함하는 APT 설정 파일이 자동 배치됩니다. 네트워크가 일시적으로
+> 끊기거나 응답이 느려도 apt가 여러 번 재시도하므로 `Connection timed out` 오류 발생 확률이 크게
+> 줄어듭니다.
 
 > 📡 **DNS/네트워크 확인:** 빌더는 chroot 안에서 패키지를 내려받기 전에 호스트의
 > `/etc/resolv.conf`를 복사합니다. 호스트가 사설 DNS, VPN, 프록시 등을 사용한다면

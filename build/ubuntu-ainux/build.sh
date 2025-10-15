@@ -40,6 +40,12 @@ ARCH="amd64"
 DEFAULT_ARCHIVE_MIRROR="http://archive.ubuntu.com/ubuntu"
 DEFAULT_PORTS_MIRROR="http://ports.ubuntu.com/ubuntu-ports"
 MIRROR=""
+CUSTOM_MIRROR=0
+declare -a MIRROR_CANDIDATES=()
+
+APT_RETRY_COUNT=5
+APT_RETRY_TIMEOUT=30
+APT_FORCE_IPV4=1
 ISO_LABEL="AINUX"
 WORK_DIR="$SCRIPT_DIR/work"
 ROOTFS_DIR="$WORK_DIR/chroot"
@@ -263,6 +269,93 @@ register_mount_point() {
   fi
 }
 
+add_mirror_candidate() {
+  local candidate="$1"
+  if [[ -z "$candidate" ]]; then
+    return
+  fi
+  for existing in "${MIRROR_CANDIDATES[@]}"; do
+    if [[ "$existing" == "$candidate" ]]; then
+      return
+    fi
+  done
+  MIRROR_CANDIDATES+=("$candidate")
+}
+
+fallback_mirrors_for_arch() {
+  local target_arch="$(normalize_arch "$1")"
+  case "$target_arch" in
+    arm64|aarch64)
+      cat <<'EOF'
+http://archive.ubuntu.com/ubuntu
+http://kr.archive.ubuntu.com/ubuntu
+http://mirror.kakao.com/ubuntu
+EOF
+      ;;
+    amd64|x86_64)
+      cat <<'EOF'
+http://kr.archive.ubuntu.com/ubuntu
+http://mirror.kakao.com/ubuntu
+http://ftp.harukasan.org/ubuntu
+EOF
+      ;;
+    *)
+      cat <<'EOF'
+http://archive.ubuntu.com/ubuntu
+http://kr.archive.ubuntu.com/ubuntu
+EOF
+      ;;
+  esac
+}
+
+render_sources_with_candidates() {
+  local template="$1"
+  local dest="$2"
+  shift 2
+  local -a candidates=("$@")
+  if [[ ! -f "$template" || ${#candidates[@]} -eq 0 ]]; then
+    return
+  fi
+
+  local tmp_file
+  tmp_file="$(mktemp)"
+  local idx=0
+  for mirror in "${candidates[@]}"; do
+    if [[ -z "$mirror" ]]; then
+      continue
+    fi
+    local escaped
+    escaped="$(printf '%s\n' "$mirror" | sed 's/[&\\/]/\\&/g')"
+    if (( idx > 0 )); then
+      printf '\n' >> "$tmp_file"
+    fi
+    sed "s|@UBUNTU_MIRROR@|$escaped|g" "$template" >> "$tmp_file"
+    idx=$(( idx + 1 ))
+  done
+  sudo mkdir -p "$(dirname "$dest")"
+  sudo cp "$tmp_file" "$dest"
+  rm -f "$tmp_file"
+}
+
+write_apt_retry_config() {
+  local conf_dir="$ROOTFS_DIR/etc/apt/apt.conf.d"
+  sudo mkdir -p "$conf_dir"
+  local tmp_file
+  tmp_file="$(mktemp)"
+  {
+    printf 'Acquire::Retries "%d";\n' "$APT_RETRY_COUNT"
+    printf 'Acquire::http::Timeout "%d";\n' "$APT_RETRY_TIMEOUT"
+    printf 'Acquire::https::Timeout "%d";\n' "$APT_RETRY_TIMEOUT"
+    printf 'Acquire::ftp::Timeout "%d";\n' "$APT_RETRY_TIMEOUT"
+    printf 'Acquire::http::Pipeline-Depth "0";\n'
+    if [[ $APT_FORCE_IPV4 -eq 1 ]]; then
+      printf 'Acquire::ForceIPv4 "true";\n'
+    fi
+  } > "$tmp_file"
+  sudo cp "$tmp_file" "$conf_dir/99ainux-retries"
+  rm -f "$tmp_file"
+}
+
 default_mirror_for_arch() {
   local target_arch="$(normalize_arch "$1")"
   case "$target_arch" in
@@ -465,23 +558,60 @@ bootstrap_base() {
     echo "[resume] Use --clean-work or remove the directory to rebuild from scratch." >&2
     exit 1
   fi
+  local success=0
+  local attempt=0
   if [[ $USE_FOREIGN_STAGE -eq 1 ]]; then
     echo "[bootstrap] Host architecture ($HOST_ARCH) differs from target ($ARCH); using foreign bootstrap"
-    sudo debootstrap --arch="$ARCH" --foreign "$RELEASE" "$ROOTFS_DIR" "$MIRROR"
     resolve_qemu_static
     if [[ -z "$QEMU_STATIC_BIN" || ! -x "$QEMU_STATIC_BIN" ]]; then
       echo "[error] Required qemu-user-static binary not found for $ARCH (expected $QEMU_STATIC_BIN)" >&2
       exit 1
     fi
-    sudo mkdir -p "$ROOTFS_DIR/usr/bin"
-    local qemu_basename
-    qemu_basename="$(basename "$QEMU_STATIC_BIN")"
-    sudo cp "$QEMU_STATIC_BIN" "$ROOTFS_DIR/usr/bin/"
-    FOREIGN_QEMU_BASENAME="$qemu_basename"
-    run_foreign_second_stage
-  else
-    sudo debootstrap --arch="$ARCH" "$RELEASE" "$ROOTFS_DIR" "$MIRROR"
   fi
+
+  for candidate in "${MIRROR_CANDIDATES[@]}"; do
+    if [[ -z "$candidate" ]]; then
+      continue
+    fi
+    attempt=$(( attempt + 1 ))
+    if (( attempt == 1 )); then
+      echo "[bootstrap] Using mirror: $candidate"
+    else
+      echo "[bootstrap] Retrying with fallback mirror: $candidate"
+    fi
+    if [[ $USE_FOREIGN_STAGE -eq 1 ]]; then
+      if sudo debootstrap --arch="$ARCH" --foreign "$RELEASE" "$ROOTFS_DIR" "$candidate"; then
+        MIRROR="$candidate"
+        sudo mkdir -p "$ROOTFS_DIR/usr/bin"
+        local qemu_basename
+        qemu_basename="$(basename "$QEMU_STATIC_BIN")"
+        sudo cp "$QEMU_STATIC_BIN" "$ROOTFS_DIR/usr/bin/"
+        FOREIGN_QEMU_BASENAME="$qemu_basename"
+        run_foreign_second_stage
+        success=1
+        break
+      fi
+    else
+      if sudo debootstrap --arch="$ARCH" "$RELEASE" "$ROOTFS_DIR" "$candidate"; then
+        MIRROR="$candidate"
+        success=1
+        break
+      fi
+    fi
+    local status=$?
+    echo "[bootstrap] debootstrap failed with exit $status using mirror $candidate" >&2
+    if (( attempt < ${#MIRROR_CANDIDATES[@]} )); then
+      echo "[bootstrap] Cleaning partial rootfs before next attempt" >&2
+      sudo rm -rf "$ROOTFS_DIR"
+      sudo mkdir -p "$ROOTFS_DIR"
+    fi
+  done
+
+  if [[ $success -ne 1 ]]; then
+    echo "[error] Failed to bootstrap $RELEASE/$ARCH after trying ${#MIRROR_CANDIDATES[@]} mirrors" >&2
+    exit 1
+  fi
+
   mark_stage "bootstrap" "$stage_meta"
 }
 
@@ -495,16 +625,14 @@ copy_overlay() {
 configure_apt() {
   local sources_file="$CONFIG_DIR/sources.list"
   if [[ -f "$sources_file" ]]; then
-    echo "[apt] Rendering sources.list for $ARCH using mirror $MIRROR"
-    if grep -q "@UBUNTU_MIRROR@" "$sources_file"; then
-      local escaped_mirror
-      escaped_mirror="$(printf '%s\n' "$MIRROR" | sed 's/[&\\/]/\\&/g')"
-      sudo sed "s|@UBUNTU_MIRROR@|$escaped_mirror|g" "$sources_file" | \
-        sudo tee "$ROOTFS_DIR/etc/apt/sources.list" >/dev/null
+    if (( ${#MIRROR_CANDIDATES[@]} > 1 )); then
+      echo "[apt] Rendering sources.list with primary mirror $MIRROR and ${#MIRROR_CANDIDATES[@]} total candidates"
     else
-      sudo cp "$sources_file" "$ROOTFS_DIR/etc/apt/sources.list"
+      echo "[apt] Rendering sources.list for $ARCH using mirror $MIRROR"
     fi
+    render_sources_with_candidates "$sources_file" "$ROOTFS_DIR/etc/apt/sources.list" "${MIRROR_CANDIDATES[@]}"
   fi
+  write_apt_retry_config
 }
 
 install_packages() {
@@ -1025,11 +1153,23 @@ main() {
     ARCH="$normalized_target"
   fi
 
+  MIRROR_CANDIDATES=()
   if [[ -z "$MIRROR" ]]; then
     MIRROR="$(default_mirror_for_arch "$ARCH")"
+    CUSTOM_MIRROR=0
     echo "[mirror] Using default mirror for $ARCH: $MIRROR"
   else
+    CUSTOM_MIRROR=1
     echo "[mirror] Using custom mirror: $MIRROR"
+  fi
+  add_mirror_candidate "$MIRROR"
+  if [[ $CUSTOM_MIRROR -eq 0 ]]; then
+    while IFS= read -r fallback; do
+      add_mirror_candidate "$fallback"
+    done < <(fallback_mirrors_for_arch "$ARCH")
+    if (( ${#MIRROR_CANDIDATES[@]} > 1 )); then
+      echo "[mirror] Fallback mirrors registered: ${MIRROR_CANDIDATES[*]:1}"
+    fi
   fi
 
   local default_iso_path="$REPO_ROOT/output/ainux-$RELEASE-$ARCH.iso"
