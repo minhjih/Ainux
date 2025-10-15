@@ -218,6 +218,22 @@ AINUXCLIENT
   rm -rf /tmp/ainux_ai
 fi
 
+cat <<'AINUXINSTALL' > /usr/local/bin/ainux-install
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${EUID}" -ne 0 ]]; then
+  exec pkexec /usr/local/bin/ainux-install --as-root "$@"
+fi
+
+if [[ "${1:-}" == "--as-root" ]]; then
+  shift
+fi
+
+exec /usr/bin/ubiquity --no-migration-assistant "$@"
+AINUXINSTALL
+chmod +x /usr/local/bin/ainux-install
+
 if [[ -d /tmp/ainux_branding ]]; then
   install -d /usr/share/ainux/branding
   cp -a /tmp/ainux_branding/*.png /usr/share/ainux/branding/ 2>/dev/null || true
@@ -300,7 +316,7 @@ secondary-color='#0A1324'
 picture-uri='file:///usr/share/backgrounds/ainux/ainux.png'
 
 [org/gnome/shell]
-favorite-apps=['firefox.desktop','org.gnome.Terminal.desktop','ainux-studio.desktop']
+favorite-apps=['ainux-installer.desktop','ainux-studio.desktop','firefox.desktop','org.gnome.Terminal.desktop']
 
 [org/gnome/desktop/interface]
 color-scheme='prefer-dark'
@@ -317,6 +333,19 @@ LOCALDCONF
 dconf update
 
 gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null || true
+
+cat <<'INSTALLAPP' > /usr/share/applications/ainux-installer.desktop
+[Desktop Entry]
+Type=Application
+Name=Install Ainux
+Comment=Install Ainux onto an internal disk
+Exec=/usr/local/bin/ainux-install
+Icon=ainux
+Terminal=false
+Categories=System;Utility;
+Keywords=installer;setup;deployment;
+StartupNotify=true
+INSTALLAPP
 
 cat <<'DESKTOP' > /usr/share/applications/ainux-studio.desktop
 [Desktop Entry]
@@ -342,6 +371,22 @@ Terminal=false
 X-GNOME-Autostart-enabled=true
 AUTOSTART
 chown -R ainux:ainux /home/ainux/.config/autostart
+
+install -d /home/ainux/Desktop
+cat <<'INSTALLDESKTOP' > /home/ainux/Desktop/Install Ainux.desktop
+[Desktop Entry]
+Type=Application
+Name=Install Ainux
+Comment=Install Ainux onto an internal disk
+Exec=/usr/local/bin/ainux-install
+Icon=ainux
+Terminal=false
+Categories=System;Utility;
+Keywords=installer;setup;deployment;
+StartupNotify=true
+INSTALLDESKTOP
+chmod +x /home/ainux/Desktop/Install\ Ainux.desktop
+chown -R ainux:ainux /home/ainux/Desktop
 
 if [[ ! -f /home/ainux/.config/ainux/context_fabric.json ]]; then
   PYTHONPATH="/usr/local/lib/ainux:${PYTHONPATH:-}" python3 - <<'PY'

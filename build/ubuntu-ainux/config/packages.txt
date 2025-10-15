@@ -49,6 +49,11 @@ yaru-theme-icon
 yaru-theme-sound
 x11-xserver-utils
 dconf-cli
+# Guided installer so the live image can deploy onto NVMe/SATA disks
+casper
+ubiquity
+ubiquity-frontend-gtk
+ubiquity-slideshow-ubuntu
 # Icon theme helpers for branding overrides
 libgtk-3-bin
 # GPU enablement (optional; skipped automatically when unavailable)

@@ -23,6 +23,9 @@ maintaining compatibility with upstream updates.
 * Installs the `ubuntu-desktop-minimal` GNOME session, enables GDM auto-login for
   the `ainux` user, and autostarts the browser-based Ainux Studio so the live ISO
   immediately feels like a desktop OS rather than a server shell.
+* Bundles Ubuntu's `ubiquity` installer stack (GTK frontend, slideshow) and seeds
+  `Install Ainux` launchers on the desktop and Activities overview so the live ISO
+  can deploy onto NVMe/SSD/HDD targets without requiring a separate installer image.
 * Forces Netplan to use the NetworkManager renderer and bundles
   `open-vm-tools-desktop` so VMware/VirtualBox/QEMU guests obtain networking
   automatically without manual configuration.
@@ -189,6 +192,31 @@ for bare-metal installation/testing:
 ```bash
 sudo dd if=~/ainux-jammy.iso of=/dev/sdX bs=4M status=progress && sync
 ```
+
+### Installing onto NVMe/SSD from the live session
+
+The generated ISO boots into a branded GNOME desktop running as the `ainux`
+user. To install the system onto a persistent NVMe/SSD/HDD volume, launch the
+**Install Ainux** shortcut placed on both the desktop and the Activities
+overview. Under the hood it runs Ubuntu's `ubiquity` GTK frontend with Ainux
+branding and defaults.
+
+1. Choose your language, keyboard layout, and timezone as usual.
+2. Select the destination disk/partition (NVMe, SATA, virtual disk, etc.).
+3. Proceed through the installer; the default `ainux` account is created with the
+   same `ainuxos` password seeded in the live session.
+4. When prompted, remove the ISO/USB and reboot—GRUB will load the newly
+   installed system directly from the internal disk.
+
+You can also run the installer from a terminal:
+
+```bash
+/usr/local/bin/ainux-install
+```
+
+When executed as a non-root user, the helper uses `pkexec` to elevate and then
+calls `ubiquity --no-migration-assistant`, matching the desktop launcher
+behaviour.
 
 ### 라이브 세션 접속 정보
 

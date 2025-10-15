@@ -47,6 +47,28 @@ sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64 --output ~/ainu
 > halts, review `/tmp/ainux-build.log` (created automatically) for the failing
 > command or rerun with `--keep-work` to inspect the generated chroot.
 
+### 라이브 ISO에서 NVMe/SSD에 설치하기
+
+Ainux ISO는 Ubuntu 라이브 세션과 동일한 방식으로 부팅되지만, 이제 데스크톱과
+활동 개요에 **Install Ainux** 런처가 함께 배포됩니다. 이 설치 프로그램은
+`ubiquity` 프론트엔드를 사용하여 원하는 NVMe/SSD/HDD 파티션에 Ainux를
+설치합니다.
+
+1. ISO를 부팅하면 `ainux` 사용자로 자동 로그인됩니다.
+2. 바탕화면이나 활동 개요에서 **Install Ainux** 아이콘을 실행합니다.
+3. 한국어/영어 등 언어와 키보드, 디스크 파티션을 선택해 설치를 완료합니다.
+4. 설치가 끝나면 매체를 제거한 뒤 재부팅하면 NVMe/SSD에서 `ainux`가 직접 부팅됩니다.
+
+터미널에서 설치하고 싶다면 다음 명령을 실행할 수 있습니다.
+
+```bash
+/usr/local/bin/ainux-install
+```
+
+일반 사용자로 실행하면 `pkexec`가 자동으로 관리자 권한을 요청하며, 기존 Ubuntu
+설치 프로그램과 동일한 마법사가 나타납니다. 설치 완료 후에는 `ainux` 계정이 그대로
+생성되고, 브랜드화된 GNOME 데스크톱이 NVMe/SSD의 기본 루트 파일시스템으로 구성됩니다.
+
 ### NVMe/가상 디스크용 RAW 이미지 생성
 
 ISO는 언제나 "광학" 장치(가상 CD/DVD)로 인식되므로, 하드 디스크에 직접 설치한
