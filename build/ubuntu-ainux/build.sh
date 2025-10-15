@@ -776,24 +776,76 @@ FSTAB
   echo "[disk] Disk image ready: $output_path"
 }
 
-assemble_iso() {
-  local output_iso="$OUTPUT_PATH"
-  echo "[iso] Building ISO at $output_iso"
-  local isohdpfx="/usr/lib/ISOLINUX/isohdpfx.bin"
-  local isohybrid_args=()
-  if [[ -f "$isohdpfx" ]]; then
-    isohybrid_args=(-isohybrid-mbr "$isohdpfx" -isohybrid-gpt-basdat)
+human_readable_bytes() {
+  local bytes="$1"
+  if command -v numfmt >/dev/null 2>&1; then
+    numfmt --to=iec --suffix=B "$bytes"
+  else
+    echo "${bytes}B"
   fi
-  local xorriso_cmd=("sudo" "xorriso" -as mkisofs
+}
+
+build_xorriso_base_args() {
+  local -n _args_ref="$1"
+  _args_ref=(-as mkisofs
     -r -V "$ISO_LABEL" -J -l
     -b isolinux/isolinux.bin
     -c isolinux/boot.cat
     -no-emul-boot -boot-load-size 4 -boot-info-table
     -eltorito-alt-boot -e efi.img -no-emul-boot)
-  if (( ${#isohybrid_args[@]} )); then
-    xorriso_cmd+=(${isohybrid_args[@]})
+  local isohdpfx="/usr/lib/ISOLINUX/isohdpfx.bin"
+  if [[ -f "$isohdpfx" ]]; then
+    _args_ref+=(-isohybrid-mbr "$isohdpfx" -isohybrid-gpt-basdat)
   fi
-  xorriso_cmd+=( -o "$output_iso" "$ISO_DIR" )
+}
+
+estimate_iso_size_bytes() {
+  local base_args=()
+  build_xorriso_base_args base_args
+  local cmd=(xorriso)
+  cmd+=("${base_args[@]}" "-quiet" "-print-size" "$ISO_DIR")
+  local raw_output
+  if ! raw_output="$("${cmd[@]}")"; then
+    echo "[error] Failed to estimate ISO size with xorriso." >&2
+    exit 1
+  fi
+  local sector_count
+  sector_count=$(echo "$raw_output" | awk 'NF && $1 ~ /^[0-9]+$/ {print $1; exit}')
+  if [[ -z "$sector_count" ]]; then
+    echo "[error] Unexpected xorriso size output: $raw_output" >&2
+    exit 1
+  fi
+  echo $(( sector_count * 2048 ))
+}
+
+assemble_iso() {
+  local output_iso="$OUTPUT_PATH"
+  echo "[iso] Building ISO at $output_iso"
+  local output_dir="$(dirname "$output_iso")"
+  local available_bytes
+  available_bytes=$(df -PB1 "$output_dir" | awk 'NR==2 {print $4}')
+  if [[ -z "$available_bytes" ]]; then
+    echo "[error] Failed to determine free space for $output_dir" >&2
+    exit 1
+  fi
+  local iso_bytes
+  iso_bytes=$(estimate_iso_size_bytes)
+  local safety_margin=$(( 100 * 1024 * 1024 ))
+  local estimated_bytes=$(( iso_bytes + safety_margin ))
+  if (( available_bytes < estimated_bytes )); then
+    echo "[error] Not enough free space in $output_dir for ISO creation." >&2
+    echo "[error] Estimated requirement: $(human_readable_bytes "$estimated_bytes"), available: $(human_readable_bytes "$available_bytes")." >&2
+    echo "[hint] Free additional space or rerun with --output pointing to a larger volume." >&2
+    exit 1
+  fi
+  local iso_human
+  iso_human=$(human_readable_bytes "$iso_bytes")
+  echo "[iso] Estimated ISO size: $iso_human (plus safety margin)"
+  rm -f "$output_iso"
+  local base_args=()
+  build_xorriso_base_args base_args
+  local xorriso_cmd=("sudo" "xorriso")
+  xorriso_cmd+=("${base_args[@]}" "-o" "$output_iso" "$ISO_DIR")
   "${xorriso_cmd[@]}"
   echo "[iso] ISO created: $output_iso"
 }

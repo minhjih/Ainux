@@ -170,6 +170,13 @@ By default the resulting ISO is written to `../output/ainux-<release>-<arch>.iso
 relative to the repository root (e.g. `output/ainux-jammy-amd64.iso`). Use the
 `--output` flag if you prefer a different location.
 
+> 💾 **Free space check:** Before `xorriso` writes the image the script runs
+> `xorriso -print-size` with the exact boot arguments to estimate the finished
+> ISO size, adds a 100MiB safety margin, then compares the result with the
+> destination filesystem's free space. If there is not enough capacity the build
+> exits with a clear error explaining how much space is required and how much is
+> available so you can free space or pick a different `--output` path.
+
 The build always produces the ISO alone so low-storage hosts are not forced to
 provision large raw disks. When you explicitly want a bootable raw disk (ideal
 for NVMe passthrough or VM disks) pass `--disk-image` and optionally

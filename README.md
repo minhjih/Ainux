@@ -51,6 +51,13 @@ sudo AINUX_ALLOW_BUILD=1 ./build.sh --release jammy --arch amd64
 `ainux-<release>-<arch>.iso` 이름으로 저장됩니다(예: `output/ainux-jammy-amd64.iso`).
 별도의 경로로 내보내고 싶다면 `--output` 플래그를 지정하면 됩니다.
 
+> 💾 **디스크 여유 공간 확인:** ISO 조립 단계에서 `xorriso -print-size`를 먼저
+> 호출해 실제 ISO가 차지할 예상 용량을 계산한 뒤, 출력 디렉터리의 가용 공간과
+> 100MiB 안전 버퍼를 비교합니다. 여유 공간이 부족하면 스크립트가 즉시 종료하면서
+> 필요한 용량과 현재 남은 용량을 안내합니다. 오류가 발생했다면 저장소를 다른
+> 디스크로 옮기거나 `--output` 옵션으로 충분한 공간이 있는 위치를 지정한 뒤 다시
+> 실행하세요.
+
 ### 라이브 ISO에서 NVMe/SSD에 설치하기
 
 Ainux ISO는 Ubuntu 라이브 세션과 동일한 방식으로 부팅되지만, 이제 데스크톱과
