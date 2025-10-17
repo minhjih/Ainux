@@ -436,6 +436,10 @@ while IFS= read -r line; do
   fi
 done < /tmp/packages.txt
 
+/usr/bin/apt-get -f install -y --fix-missing \
+  -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 || true
+
+
 /usr/bin/apt-get clean
 INSTALLPKG
     sudo chmod +x "$ROOTFS_DIR/tmp/install_packages.sh"
