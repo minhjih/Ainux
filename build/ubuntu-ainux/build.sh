@@ -727,7 +727,7 @@ FSTAB
       fi
     done
     if (( ${#install_needed[@]} )); then
-      sudo chroot "$root_mount" /usr/bin/apt-get update -fix --missing
+      sudo chroot "$root_mount" /usr/bin/apt-get update --fix-missing
       if ! sudo chroot "$root_mount" /usr/bin/apt-get install -y "${install_needed[@]}"; then
         echo "[warn] Failed to install GRUB packages (${install_needed[*]}) inside disk image; continuing" >&2
       fi
