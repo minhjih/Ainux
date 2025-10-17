@@ -410,7 +410,7 @@ install_packages() {
 #!/usr/bin/env bash
 set -euo pipefail
 
-/usr/bin/apt-get update
+/usr/bin/apt-get update --fix-missing
 
 while IFS= read -r line; do
   pkg="$(printf '%s\n' "$line" | sed -e 's/#.*$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
@@ -519,7 +519,7 @@ seed_configuration_files() {
 
 configure_live_boot() {
   echo "[live] Setting up live boot configuration"
-  sudo chroot "$ROOTFS_DIR" /usr/bin/apt-get update
+  sudo chroot "$ROOTFS_DIR" /usr/bin/apt-get update --fix-missing
   local required_pkgs=(linux-generic casper discover laptop-detect os-prober network-manager)
   local optional_pkgs=(lupin-casper)
   if [[ "$ARCH" == "amd64" || "$ARCH" == "x86_64" ]]; then
@@ -727,7 +727,7 @@ FSTAB
       fi
     done
     if (( ${#install_needed[@]} )); then
-      sudo chroot "$root_mount" /usr/bin/apt-get update
+      sudo chroot "$root_mount" /usr/bin/apt-get update -fix --missing
       if ! sudo chroot "$root_mount" /usr/bin/apt-get install -y "${install_needed[@]}"; then
         echo "[warn] Failed to install GRUB packages (${install_needed[*]}) inside disk image; continuing" >&2
       fi
