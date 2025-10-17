@@ -425,14 +425,14 @@ while IFS= read -r line; do
   fi
 
   if [[ $optional -eq 1 ]]; then
-    if /usr/bin/apt-get install -y "$pkg"; then
+    if /usr/bin/apt-get install -y --fix-missing "$pkg"; then
       continue
     fi
     status=$?
     echo "[packages] Optional package $pkg unavailable (exit $status); skipping" >&2
     /usr/bin/apt-get -y --fix-broken install >/dev/null 2>&1 || true
   else
-    /usr/bin/apt-get install -y "$pkg"
+    /usr/bin/apt-get install -y --fix-missing "$pkg"
   fi
 done < /tmp/packages.txt
 
