@@ -425,20 +425,16 @@ while IFS= read -r line; do
   fi
 
   if [[ $optional -eq 1 ]]; then
-    if /usr/bin/apt-get install -y --fix-missing "$pkg"; then
+    if /usr/bin/apt-get install -y "$pkg"; then
       continue
     fi
     status=$?
     echo "[packages] Optional package $pkg unavailable (exit $status); skipping" >&2
     /usr/bin/apt-get -y --fix-broken install >/dev/null 2>&1 || true
   else
-    /usr/bin/apt-get install -y --fix-missing "$pkg"
+    /usr/bin/apt-get install -y "$pkg"
   fi
 done < /tmp/packages.txt
-
-/usr/bin/apt-get -f install -y --fix-missing \
-  -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 || true
-
 
 /usr/bin/apt-get clean
 INSTALLPKG
@@ -731,7 +727,7 @@ FSTAB
       fi
     done
     if (( ${#install_needed[@]} )); then
-      sudo chroot "$root_mount" /usr/bin/apt-get update --fix-missing
+      sudo chroot "$root_mount" /usr/bin/apt-get update -fix --missing
       if ! sudo chroot "$root_mount" /usr/bin/apt-get install -y "${install_needed[@]}"; then
         echo "[warn] Failed to install GRUB packages (${install_needed[*]}) inside disk image; continuing" >&2
       fi
