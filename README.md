@@ -1,5 +1,9 @@
 # Ainux
 
+<p align='center'>
+  <img src='./folder/ainux.png' width="300px" height="300px"/>
+</p>
+
 Ainux is an AI-native operating system concept that layers intelligent
 automation and hardware orchestration on top of a familiar Linux user
 experience. This repository now contains both the high-level architecture
@@ -161,24 +165,10 @@ RAW 이미지는 GPT 파티션(512MiB EFI + 나머지 루트), `UUID` 기반 `fs
 > appropriate QEMU static binary. Without those packages debootstrap will fail
 > with errors such as `Failure trying to run: chroot ... /bin/true`.
 
-> 🌐 **arm64 미러 기본값 & 폴백:** `arm64`(또는 기타 ARM 타깃)으로 빌드하면 먼저
-> `http://ports.ubuntu.com/ubuntu-ports`가 사용되지만, 네트워크 오류나 타임아웃이 발생하면
-> `ftp.kaist.ac.kr/ubuntu-ports`, `mirror.kakao.com/ubuntu-ports`, `ftp.harukasan.org/ubuntu-ports`
-> 순으로 자동 재시도합니다. 기본 미러가 성공한 뒤에도 후보 목록이 `/etc/apt/ainux-mirrors`
-> 에 저장되고, 빌더가 배치한 APT 헬퍼(`ainux_apt_failover`)가 패키지 설치마다 동일한 순서로
-> 미러를 교체하며 재시도하므로 `gnome-control-center-data`처럼 큰 패키지가 특정 미러에서
-> 계속 타임아웃이 나도 다음 후보로 자동 이동합니다. 직접 미러를 고정하고 싶다면 `--mirror`
-> 옵션을 사용하세요.
-
-> ♻️ **네트워크 타임아웃 자동 재시도:** `build.sh`가 chroot 내부에 `Acquire::Retries`와
-> `Acquire::http::Timeout` 설정을 포함한 APT 구성 파일을 배치하므로, 일시적인 연결 끊김이나
-> 느린 응답이 있더라도 패키지 다운로드를 여러 번 재시도합니다. IPv6 연결이 불안정한 환경을
-> 대비해 `ForceIPv4` 옵션도 기본 활성화되어 있습니다.
-
-> 🔁 **APT 미러 폴백 헬퍼:** `configure_apt` 단계에서 `/usr/local/lib/ainux/apt-failover.sh`
-> 가 배치되고, `install_packages.sh` 및 라이브 부트 준비 과정이 이 스크립트를 사용하여
-> 패키지 설치가 실패할 때마다 다음 미러로 자동 전환합니다. 네트워크가 순간적으로 끊기거나
-> 특정 미러가 느릴 때 `Connection timed out` 오류로 빌드가 중단되던 문제를 예방합니다.
+> 🌐 **arm64 미러 기본값:** `arm64` (또는 기타 ARM 타깃)으로 빌드하면 스크립트가 자동으로
+> `http://ports.ubuntu.com/ubuntu-ports` 미러를 선택합니다. 아시아(특히 한국) 지역에서는
+> 이 포트 미러가 가장 안정적으로 패키지를 내려받으므로 별도 설정 없이도 빠르게 빌드할 수
+> 있습니다. 다른 거울을 사용하려면 `--mirror` 옵션으로 URL을 명시하세요.
 
 > 📡 **DNS 확인:** chroot 내부에서 패키지를 내려받을 때 호스트의 `/etc/resolv.conf`를
 > 그대로 복사하여 사용합니다. 만약 호스트가 커스텀 DNS를 쓰거나 VPN/프록시 환경에 있다면

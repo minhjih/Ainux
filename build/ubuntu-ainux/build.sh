@@ -37,15 +37,9 @@ echo "[log] Streaming build output to $LOG_FILE"
 
 RELEASE="jammy"
 ARCH="amd64"
-DEFAULT_ARCHIVE_MIRROR="http://archive.ubuntu.com/ubuntu"
-DEFAULT_PORTS_MIRROR="http://ports.ubuntu.com/ubuntu-ports"
+DEFAULT_ARCHIVE_MIRROR="http://ftp.kaist.ac.kr/ubuntu"
+DEFAULT_PORTS_MIRROR="http://ftp.kaist.ac.kr/ubuntu-ports"
 MIRROR=""
-CUSTOM_MIRROR=0
-declare -a MIRROR_CANDIDATES=()
-
-APT_RETRY_COUNT=5
-APT_RETRY_TIMEOUT=30
-APT_FORCE_IPV4=1
 ISO_LABEL="AINUX"
 WORK_DIR="$SCRIPT_DIR/work"
 ROOTFS_DIR="$WORK_DIR/chroot"
@@ -55,9 +49,6 @@ OVERLAY_DIR="$SCRIPT_DIR/overlay"
 AI_CLIENT_DIR="$REPO_ROOT/ainux_ai"
 BRANDING_DIR="$REPO_ROOT/folder"
 EFI_STAGING_DIR="$WORK_DIR/efi"
-METADATA_FILE="$WORK_DIR/.build-meta"
-STAGE_DIR="$WORK_DIR/.stages"
-KEEP_WORK=1
 DISK_IMAGE_PATH=""
 DISK_IMAGE_SIZE="16G"
 OUTPUT_PATH=""
@@ -92,8 +83,7 @@ Options:
   -o, --output <path>              Output ISO path (default: <repo>/output/ainux-<release>-<arch>.iso)
   --disk-image <path>              Optional raw disk image output path
   --disk-size <size>               Size for disk image (default: $DISK_IMAGE_SIZE)
-  -c, --clean-work                 Remove working directories after completion (default: keep)
-      --keep-work                  Deprecated alias; working directories are kept by default
+  -k, --keep-work                  Keep working directories after completion
   -h, --help                       Show this help message
 USAGE
 }
@@ -105,7 +95,7 @@ determine_efi_target() {
       EFI_BOOT_FILENAME="BOOTX64.EFI"
       EFI_PACKAGE_NAME="grub-efi-amd64-bin"
       ;;
-    arm64|aarch64|armhf|armel)
+    arm64|aarch64)
       EFI_GRUB_TARGET="arm64-efi"
       EFI_BOOT_FILENAME="BOOTAA64.EFI"
       EFI_PACKAGE_NAME="grub-efi-arm64-bin"
@@ -156,87 +146,6 @@ cleanup() {
   fi
 }
 
-stage_marker_path() {
-  local stage="$1"
-  echo "$STAGE_DIR/$stage"
-}
-
-mark_stage() {
-  local stage="$1"
-  local metadata="${2:-}"
-  mkdir -p "$STAGE_DIR"
-  printf '%s\n' "$metadata" > "$(stage_marker_path "$stage")"
-}
-
-clear_stage() {
-  local stage="$1"
-  local path
-  path="$(stage_marker_path "$stage")"
-  if [[ -f "$path" ]]; then
-    rm -f "$path"
-  fi
-}
-
-read_stage_metadata() {
-  local stage="$1"
-  local path
-  path="$(stage_marker_path "$stage")"
-  if [[ -f "$path" ]]; then
-    cat "$path"
-  fi
-}
-
-should_skip_stage() {
-  local stage="$1"
-  local expected="${2:-}"
-  local current
-  current="$(read_stage_metadata "$stage")"
-  if [[ -z "$current" ]]; then
-    return 1
-  fi
-  if [[ "$current" == "$expected" ]]; then
-    echo "[resume] Stage '$stage' already satisfied (metadata match); skipping"
-    return 0
-  fi
-  echo "[resume] Stage '$stage' metadata changed (expected '$expected', found '$current'); rerunning"
-  return 1
-}
-
-validate_existing_metadata() {
-  if [[ ${KEEP_WORK:-0} -eq 0 ]]; then
-    return
-  fi
-  if [[ ! -f "$METADATA_FILE" ]]; then
-    return
-  fi
-  local stored_release=""
-  local stored_arch=""
-  while IFS='=' read -r key value; do
-    case "$key" in
-      release) stored_release="$value" ;;
-      arch) stored_arch="$value" ;;
-    esac
-  done < "$METADATA_FILE"
-  if [[ -n "$stored_release" && "$stored_release" != "$RELEASE" ]]; then
-    echo "[resume] Existing work directory targets release '$stored_release'. Use --clean-work or remove $WORK_DIR for a fresh build." >&2
-    exit 1
-  fi
-  if [[ -n "$stored_arch" && "$stored_arch" != "$ARCH" ]]; then
-    echo "[resume] Existing work directory targets architecture '$stored_arch'. Use --clean-work or remove $WORK_DIR for a fresh build." >&2
-    exit 1
-  fi
-}
-
-ensure_build_metadata() {
-  mkdir -p "$WORK_DIR"
-  cat > "$METADATA_FILE" <<EOF
-release=$RELEASE
-arch=$ARCH
-timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-EOF
-  mkdir -p "$STAGE_DIR"
-}
-
 normalize_arch() {
   local value="$1"
   case "$value" in
@@ -267,272 +176,6 @@ register_mount_point() {
     DISK_MOUNTS+=("$mount_point")
     DISK_MOUNT_REMOVE+=("$remove_dir")
   fi
-}
-
-add_mirror_candidate() {
-  local candidate="$1"
-  if [[ -z "$candidate" ]]; then
-    return
-  fi
-  for existing in "${MIRROR_CANDIDATES[@]}"; do
-    if [[ "$existing" == "$candidate" ]]; then
-      return
-    fi
-  done
-  MIRROR_CANDIDATES+=("$candidate")
-}
-
-fallback_mirrors_for_arch() {
-  local target_arch="$(normalize_arch "$1")"
-  case "$target_arch" in
-    arm64|aarch64)
-      cat <<'EOF'
-http://ports.ubuntu.com/ubuntu-ports
-http://ftp.kaist.ac.kr/ubuntu-ports
-http://mirror.kakao.com/ubuntu-ports
-http://ftp.harukasan.org/ubuntu-ports
-EOF
-      ;;
-    amd64|x86_64)
-      cat <<'EOF'
-http://kr.archive.ubuntu.com/ubuntu
-http://mirror.kakao.com/ubuntu
-http://ftp.harukasan.org/ubuntu
-EOF
-      ;;
-    *)
-      cat <<'EOF'
-http://archive.ubuntu.com/ubuntu
-http://kr.archive.ubuntu.com/ubuntu
-EOF
-      ;;
-  esac
-}
-
-render_sources_with_candidates() {
-  local template="$1"
-  local dest="$2"
-  shift 2
-  local -a candidates=("$@")
-  if [[ ! -f "$template" || ${#candidates[@]} -eq 0 ]]; then
-    return
-  fi
-
-  local mirror_dir="$ROOTFS_DIR/etc/apt/ainux-mirrors"
-  sudo rm -rf "$mirror_dir"
-  sudo mkdir -p "$mirror_dir"
-  sudo mkdir -p "$(dirname "$dest")"
-
-  local tmp_candidates
-  tmp_candidates="$(mktemp)"
-  local idx=0
-  for mirror in "${candidates[@]}"; do
-    if [[ -z "$mirror" ]]; then
-      continue
-    fi
-    local escaped
-    escaped="$(printf '%s\n' "$mirror" | sed 's/[&\\/]/\\&/g')"
-    local tmp_file
-    tmp_file="$(mktemp)"
-    sed "s|@UBUNTU_MIRROR@|$escaped|g" "$template" > "$tmp_file"
-    local target_file
-    target_file="$mirror_dir/sources-$idx.list"
-    sudo cp "$tmp_file" "$target_file"
-    rm -f "$tmp_file"
-    printf '%s\n' "$mirror" >> "$tmp_candidates"
-    if (( idx == 0 )); then
-      sudo cp "$target_file" "$dest"
-    fi
-    idx=$(( idx + 1 ))
-  done
-
-  if (( idx == 0 )); then
-    sudo rm -f "$dest"
-  else
-    sudo cp "$tmp_candidates" "$mirror_dir/candidates"
-  fi
-
-  rm -f "$tmp_candidates"
-}
-
-write_apt_failover_helper() {
-  local helper_path="$ROOTFS_DIR/usr/local/lib/ainux/apt-failover.sh"
-  sudo mkdir -p "$(dirname "$helper_path")"
-  sudo tee "$helper_path" >/dev/null <<'HELPER'
-#!/usr/bin/env bash
-set -uo pipefail
-
-AINUX_MIRROR_DIR="/etc/apt/ainux-mirrors"
-AINUX_CANDIDATE_FILE="$AINUX_MIRROR_DIR/candidates"
-declare -a AINUX_MIRRORS=()
-AINUX_ACTIVE_MIRROR=-1
-AINUX_APT_INITIALIZED=0
-AINUX_APT_FAILOVER_AVAILABLE=1
-
-ainux_load_mirrors() {
-  AINUX_MIRRORS=()
-  if [[ -f "$AINUX_CANDIDATE_FILE" ]]; then
-    while IFS= read -r line; do
-      line="${line%$'\r'}"
-      if [[ -n "$line" ]]; then
-        AINUX_MIRRORS+=("$line")
-      fi
-    done < "$AINUX_CANDIDATE_FILE"
-  fi
-  if [[ ${#AINUX_MIRRORS[@]} -eq 0 ]]; then
-    AINUX_MIRRORS=("default")
-  fi
-}
-
-ainux_sources_file_for_idx() {
-  printf '%s/sources-%d.list' "$AINUX_MIRROR_DIR" "$1"
-}
-
-ainux_activate_mirror() {
-  local idx="$1"
-  if (( idx < 0 || idx >= ${#AINUX_MIRRORS[@]} )); then
-    return 1
-  fi
-  if (( idx == AINUX_ACTIVE_MIRROR )); then
-    return 0
-  fi
-  local mirror="${AINUX_MIRRORS[$idx]}"
-  local src
-  src="$(ainux_sources_file_for_idx "$idx")"
-  if [[ -f "$src" ]]; then
-    cp "$src" /etc/apt/sources.list
-  fi
-  if [[ "$mirror" != "default" ]]; then
-    echo "[ainux-apt] Switching to mirror $mirror" >&2
-  else
-    echo "[ainux-apt] Refreshing current mirror" >&2
-  fi
-  if ! /usr/bin/apt-get update; then
-    local status=$?
-    echo "[ainux-apt] apt-get update failed for $mirror (exit $status)" >&2
-    return "$status"
-  fi
-  AINUX_ACTIVE_MIRROR=$idx
-  return 0
-}
-
-ainux_mirror_order() {
-  local -a order=()
-  if (( AINUX_ACTIVE_MIRROR >= 0 && AINUX_ACTIVE_MIRROR < ${#AINUX_MIRRORS[@]} )); then
-    order+=("$AINUX_ACTIVE_MIRROR")
-  fi
-  local idx
-  for (( idx=0; idx<${#AINUX_MIRRORS[@]}; idx++ )); do
-    if (( idx == AINUX_ACTIVE_MIRROR )); then
-      continue
-    fi
-    order+=("$idx")
-  done
-  if [[ ${#order[@]} -eq 0 ]]; then
-    order+=(0)
-  fi
-  printf '%s\n' "${order[@]}"
-}
-
-ainux_install_with_failover() {
-  if (( AINUX_APT_INITIALIZED == 0 )); then
-    ainux_apt_prepare
-  fi
-  local -a apt_args=("$@")
-  local last_status=0
-  local attempt=0
-  local idx
-  while IFS= read -r idx; do
-    if [[ -z "$idx" ]]; then
-      continue
-    fi
-    attempt=$(( attempt + 1 ))
-    if ! ainux_activate_mirror "$idx"; then
-      last_status=$?
-      continue
-    fi
-    local mirror="${AINUX_MIRRORS[$idx]}"
-    if /usr/bin/apt-get install -y "${apt_args[@]}"; then
-      return 0
-    fi
-    last_status=$?
-    echo "[ainux-apt] install failed for ${apt_args[*]} on mirror $mirror (exit $last_status)" >&2
-    /usr/bin/apt-get -y --fix-broken install >/dev/null 2>&1 || true
-    /usr/bin/apt-get clean >/dev/null 2>&1 || true
-  done < <(ainux_mirror_order)
-  return "$last_status"
-}
-
-ainux_install_required() {
-  if ainux_install_with_failover "$@"; then
-    return 0
-  fi
-  return $?
-}
-
-ainux_install_optional() {
-  if ainux_install_with_failover "$@"; then
-    return 0
-  fi
-  return $?
-}
-
-ainux_apt_prepare() {
-  if (( AINUX_APT_INITIALIZED == 1 )); then
-    return 0
-  fi
-  ainux_load_mirrors
-  AINUX_APT_INITIALIZED=1
-  return 0
-}
-
-ainux_apt_prepare
-HELPER
-  sudo chmod 755 "$helper_path"
-}
-
-chroot_install_packages_with_failover() {
-  local mode="$1"
-  shift
-  local -a args=("$@")
-  if [[ ${#args[@]} -eq 0 ]]; then
-    return 0
-  fi
-  local joined
-  printf -v joined ' %q' "${args[@]}"
-  joined="${joined:1}"
-  local fn="ainux_install_required"
-  if [[ "$mode" == "optional" ]]; then
-    fn="ainux_install_optional"
-  fi
-  local shell_cmd
-  shell_cmd="set -uo pipefail; if [ -f '/usr/local/lib/ainux/apt-failover.sh' ]; then source '/usr/local/lib/ainux/apt-failover.sh'; ainux_apt_prepare; $fn $joined; else /usr/bin/apt-get update && /usr/bin/apt-get install -y $joined; fi"
-  if [[ "$mode" == "optional" ]]; then
-    if ! sudo chroot "$ROOTFS_DIR" /usr/bin/env bash -c "$shell_cmd"; then
-      return 1
-    fi
-    return 0
-  fi
-  sudo chroot "$ROOTFS_DIR" /usr/bin/env bash -c "$shell_cmd"
-}
-
-write_apt_retry_config() {
-  local conf_dir="$ROOTFS_DIR/etc/apt/apt.conf.d"
-  sudo mkdir -p "$conf_dir"
-  local tmp_file
-  tmp_file="$(mktemp)"
-  {
-    printf 'Acquire::Retries "%d";\n' "$APT_RETRY_COUNT"
-    printf 'Acquire::http::Timeout "%d";\n' "$APT_RETRY_TIMEOUT"
-    printf 'Acquire::https::Timeout "%d";\n' "$APT_RETRY_TIMEOUT"
-    printf 'Acquire::ftp::Timeout "%d";\n' "$APT_RETRY_TIMEOUT"
-    printf 'Acquire::http::Pipeline-Depth "0";\n'
-    if [[ $APT_FORCE_IPV4 -eq 1 ]]; then
-      printf 'Acquire::ForceIPv4 "true";\n'
-    fi
-  } > "$tmp_file"
-  sudo cp "$tmp_file" "$conf_dir/99ainux-retries"
-  rm -f "$tmp_file"
 }
 
 default_mirror_for_arch() {
@@ -628,10 +271,7 @@ check_dependencies() {
 }
 
 prepare_directories() {
-  if [[ ${KEEP_WORK:-0} -eq 0 ]]; then
-    sudo rm -rf "$WORK_DIR"
-  fi
-  mkdir -p "$ROOTFS_DIR" "$ISO_DIR" "$EFI_STAGING_DIR" "$STAGE_DIR"
+  mkdir -p "$ROOTFS_DIR" "$ISO_DIR" "$EFI_STAGING_DIR"
 }
 
 sync_resolv_conf() {
@@ -722,76 +362,23 @@ run_foreign_second_stage() {
 
 bootstrap_base() {
   echo "[bootstrap] Running debootstrap for $RELEASE/$ARCH"
-  local stage_meta="release=$RELEASE arch=$ARCH"
-  if should_skip_stage "bootstrap" "$stage_meta"; then
-    if [[ -f "$ROOTFS_DIR/etc/os-release" ]]; then
-      return
-    fi
-    echo "[resume] Bootstrap marker present but root filesystem is missing; rebuilding" >&2
-    clear_stage "bootstrap"
-    clear_stage "packages"
-    clear_stage "chroot-script"
-  fi
-  if [[ -d "$ROOTFS_DIR" && -n "$(ls -A "$ROOTFS_DIR" 2>/dev/null)" ]]; then
-    echo "[resume] Root filesystem at $ROOTFS_DIR already exists without a matching stage marker." >&2
-    echo "[resume] Use --clean-work or remove the directory to rebuild from scratch." >&2
-    exit 1
-  fi
-  local success=0
-  local attempt=0
   if [[ $USE_FOREIGN_STAGE -eq 1 ]]; then
     echo "[bootstrap] Host architecture ($HOST_ARCH) differs from target ($ARCH); using foreign bootstrap"
+    sudo debootstrap --arch="$ARCH" --foreign "$RELEASE" "$ROOTFS_DIR" "$MIRROR"
     resolve_qemu_static
     if [[ -z "$QEMU_STATIC_BIN" || ! -x "$QEMU_STATIC_BIN" ]]; then
       echo "[error] Required qemu-user-static binary not found for $ARCH (expected $QEMU_STATIC_BIN)" >&2
       exit 1
     fi
+    sudo mkdir -p "$ROOTFS_DIR/usr/bin"
+    local qemu_basename
+    qemu_basename="$(basename "$QEMU_STATIC_BIN")"
+    sudo cp "$QEMU_STATIC_BIN" "$ROOTFS_DIR/usr/bin/"
+    FOREIGN_QEMU_BASENAME="$qemu_basename"
+    run_foreign_second_stage
+  else
+    sudo debootstrap --arch="$ARCH" "$RELEASE" "$ROOTFS_DIR" "$MIRROR"
   fi
-
-  for candidate in "${MIRROR_CANDIDATES[@]}"; do
-    if [[ -z "$candidate" ]]; then
-      continue
-    fi
-    attempt=$(( attempt + 1 ))
-    if (( attempt == 1 )); then
-      echo "[bootstrap] Using mirror: $candidate"
-    else
-      echo "[bootstrap] Retrying with fallback mirror: $candidate"
-    fi
-    if [[ $USE_FOREIGN_STAGE -eq 1 ]]; then
-      if sudo debootstrap --arch="$ARCH" --foreign "$RELEASE" "$ROOTFS_DIR" "$candidate"; then
-        MIRROR="$candidate"
-        sudo mkdir -p "$ROOTFS_DIR/usr/bin"
-        local qemu_basename
-        qemu_basename="$(basename "$QEMU_STATIC_BIN")"
-        sudo cp "$QEMU_STATIC_BIN" "$ROOTFS_DIR/usr/bin/"
-        FOREIGN_QEMU_BASENAME="$qemu_basename"
-        run_foreign_second_stage
-        success=1
-        break
-      fi
-    else
-      if sudo debootstrap --arch="$ARCH" "$RELEASE" "$ROOTFS_DIR" "$candidate"; then
-        MIRROR="$candidate"
-        success=1
-        break
-      fi
-    fi
-    local status=$?
-    echo "[bootstrap] debootstrap failed with exit $status using mirror $candidate" >&2
-    if (( attempt < ${#MIRROR_CANDIDATES[@]} )); then
-      echo "[bootstrap] Cleaning partial rootfs before next attempt" >&2
-      sudo rm -rf "$ROOTFS_DIR"
-      sudo mkdir -p "$ROOTFS_DIR"
-    fi
-  done
-
-  if [[ $success -ne 1 ]]; then
-    echo "[error] Failed to bootstrap $RELEASE/$ARCH after trying ${#MIRROR_CANDIDATES[@]} mirrors" >&2
-    exit 1
-  fi
-
-  mark_stage "bootstrap" "$stage_meta"
 }
 
 copy_overlay() {
@@ -804,56 +391,26 @@ copy_overlay() {
 configure_apt() {
   local sources_file="$CONFIG_DIR/sources.list"
   if [[ -f "$sources_file" ]]; then
-    if (( ${#MIRROR_CANDIDATES[@]} > 1 )); then
-      echo "[apt] Rendering sources.list with primary mirror $MIRROR and ${#MIRROR_CANDIDATES[@]} total candidates"
+    echo "[apt] Rendering sources.list for $ARCH using mirror $MIRROR"
+    if grep -q "@UBUNTU_MIRROR@" "$sources_file"; then
+      local escaped_mirror
+      escaped_mirror="$(printf '%s\n' "$MIRROR" | sed 's/[&\\/]/\\&/g')"
+      sudo sed "s|@UBUNTU_MIRROR@|$escaped_mirror|g" "$sources_file" | \
+        sudo tee "$ROOTFS_DIR/etc/apt/sources.list" >/dev/null
     else
-      echo "[apt] Rendering sources.list for $ARCH using mirror $MIRROR"
+      sudo cp "$sources_file" "$ROOTFS_DIR/etc/apt/sources.list"
     fi
-    render_sources_with_candidates "$sources_file" "$ROOTFS_DIR/etc/apt/sources.list" "${MIRROR_CANDIDATES[@]}"
   fi
-  write_apt_retry_config
-  write_apt_failover_helper
 }
 
 install_packages() {
-  local pkg_hash="none"
   if [[ -f "$PACKAGES_FILE" ]]; then
-    pkg_hash="$(sha256sum "$PACKAGES_FILE" | awk '{print $1}')"
-  fi
-  local stage_meta="hash=$pkg_hash"
-  if should_skip_stage "packages" "$stage_meta"; then
-    return
-  fi
-  if [[ ! -f "$PACKAGES_FILE" ]]; then
-    echo "[packages] No additional packages requested; skipping"
-    mark_stage "packages" "$stage_meta"
-    return
-  fi
-
-  echo "[packages] Installing additional packages"
-  sudo tee "$ROOTFS_DIR/tmp/install_packages.sh" >/dev/null <<'INSTALLPKG'
+    echo "[packages] Installing additional packages"
+    sudo tee "$ROOTFS_DIR/tmp/install_packages.sh" >/dev/null <<'INSTALLPKG'
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ -f /usr/local/lib/ainux/apt-failover.sh ]]; then
-  # shellcheck disable=SC1091
-  source /usr/local/lib/ainux/apt-failover.sh
-  ainux_apt_prepare
-else
-  ainux_apt_prepare() {
-    /usr/bin/apt-get update
-  }
-  ainux_install_required() {
-    /usr/bin/apt-get install -y "$@"
-  }
-  ainux_install_optional() {
-    if /usr/bin/apt-get install -y "$@"; then
-      return 0
-    fi
-    return $?
-  }
-  ainux_apt_prepare
-fi
+/usr/bin/apt-get update --fix-missing
 
 while IFS= read -r line; do
   pkg="$(printf '%s\n' "$line" | sed -e 's/#.*$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
@@ -868,47 +425,31 @@ while IFS= read -r line; do
   fi
 
   if [[ $optional -eq 1 ]]; then
-    if ainux_install_optional "$pkg"; then
+    if /usr/bin/apt-get install -y "$pkg"; then
       continue
     fi
     status=$?
     echo "[packages] Optional package $pkg unavailable (exit $status); skipping" >&2
     /usr/bin/apt-get -y --fix-broken install >/dev/null 2>&1 || true
   else
-    if ! ainux_install_required "$pkg"; then
-      status=$?
-      echo "[packages] Failed to install required package $pkg (exit $status)" >&2
-      exit "$status"
-    fi
+    /usr/bin/apt-get install -y "$pkg"
   fi
 done < /tmp/packages.txt
 
 /usr/bin/apt-get clean
 INSTALLPKG
-  sudo chmod +x "$ROOTFS_DIR/tmp/install_packages.sh"
-  sudo chroot "$ROOTFS_DIR" /tmp/install_packages.sh
-  sudo rm -f "$ROOTFS_DIR/tmp/install_packages.sh" "$ROOTFS_DIR/tmp/packages.txt"
-  mark_stage "packages" "$stage_meta"
+    sudo chmod +x "$ROOTFS_DIR/tmp/install_packages.sh"
+    sudo chroot "$ROOTFS_DIR" /tmp/install_packages.sh
+    sudo rm -f "$ROOTFS_DIR/tmp/install_packages.sh" "$ROOTFS_DIR/tmp/packages.txt"
+  fi
 }
 
 run_chroot_script() {
-  local script_hash="none"
   if [[ -f "$CHROOT_SCRIPT" ]]; then
-    script_hash="$(sha256sum "$CHROOT_SCRIPT" | awk '{print $1}')"
+    echo "[chroot] Executing custom chroot setup script"
+    sudo chroot "$ROOTFS_DIR" /usr/bin/env bash -c "/tmp/chroot_setup.sh"
+    sudo rm -f "$ROOTFS_DIR/tmp/chroot_setup.sh"
   fi
-  local stage_meta="hash=$script_hash"
-  if should_skip_stage "chroot-script" "$stage_meta"; then
-    return
-  fi
-  if [[ ! -f "$CHROOT_SCRIPT" ]]; then
-    echo "[chroot] No custom chroot setup script provided; skipping"
-    mark_stage "chroot-script" "$stage_meta"
-    return
-  fi
-  echo "[chroot] Executing custom chroot setup script"
-  sudo chroot "$ROOTFS_DIR" /usr/bin/env bash -c "/tmp/chroot_setup.sh"
-  sudo rm -f "$ROOTFS_DIR/tmp/chroot_setup.sh"
-  mark_stage "chroot-script" "$stage_meta"
 }
 
 generate_efi_bootloader() {
@@ -978,6 +519,7 @@ seed_configuration_files() {
 
 configure_live_boot() {
   echo "[live] Setting up live boot configuration"
+  sudo chroot "$ROOTFS_DIR" /usr/bin/apt-get update --fix-missing
   local required_pkgs=(linux-generic casper discover laptop-detect os-prober network-manager)
   local optional_pkgs=(lupin-casper)
   if [[ "$ARCH" == "amd64" || "$ARCH" == "x86_64" ]]; then
@@ -988,15 +530,12 @@ configure_live_boot() {
   fi
 
   if [[ ${#required_pkgs[@]} -gt 0 ]]; then
-    if ! chroot_install_packages_with_failover "required" "--no-install-recommends" "${required_pkgs[@]}"; then
-      echo "[live] Failed to install required live-boot packages" >&2
-      exit 1
-    fi
+    sudo chroot "$ROOTFS_DIR" /usr/bin/apt-get install -y --no-install-recommends "${required_pkgs[@]}"
   fi
 
   for pkg in "${optional_pkgs[@]}"; do
     if sudo chroot "$ROOTFS_DIR" /usr/bin/apt-cache show "$pkg" >/dev/null 2>&1; then
-      if ! chroot_install_packages_with_failover "optional" "--no-install-recommends" "$pkg"; then
+      if ! sudo chroot "$ROOTFS_DIR" /usr/bin/apt-get install -y --no-install-recommends "$pkg"; then
         echo "[live] Optional package '$pkg' failed to install; continuing without it" >&2
       fi
     else
@@ -1188,7 +727,7 @@ FSTAB
       fi
     done
     if (( ${#install_needed[@]} )); then
-      sudo chroot "$root_mount" /usr/bin/apt-get update
+      sudo chroot "$root_mount" /usr/bin/apt-get update -fix --missing
       if ! sudo chroot "$root_mount" /usr/bin/apt-get install -y "${install_needed[@]}"; then
         echo "[warn] Failed to install GRUB packages (${install_needed[*]}) inside disk image; continuing" >&2
       fi
@@ -1246,42 +785,14 @@ human_readable_bytes() {
   fi
 }
 
-build_xorriso_base_args() {
-  local -n _args_ref="$1"
-  _args_ref=(-as mkisofs
-    -r -V "$ISO_LABEL" -J -l
-    -b isolinux/isolinux.bin
-    -c isolinux/boot.cat
-    -no-emul-boot -boot-load-size 4 -boot-info-table
-    -eltorito-alt-boot -e efi.img -no-emul-boot)
-  local isohdpfx="/usr/lib/ISOLINUX/isohdpfx.bin"
-  if [[ -f "$isohdpfx" ]]; then
-    _args_ref+=(-isohybrid-mbr "$isohdpfx" -isohybrid-gpt-basdat)
-  fi
-}
-
-estimate_iso_size_bytes() {
-  local base_args=()
-  build_xorriso_base_args base_args
-  local cmd=(xorriso)
-  cmd+=("${base_args[@]}" "-quiet" "-print-size" "$ISO_DIR")
-  local raw_output
-  if ! raw_output="$("${cmd[@]}")"; then
-    echo "[error] Failed to estimate ISO size with xorriso." >&2
-    exit 1
-  fi
-  local sector_count
-  sector_count=$(echo "$raw_output" | awk 'NF && $1 ~ /^[0-9]+$/ {print $1; exit}')
-  if [[ -z "$sector_count" ]]; then
-    echo "[error] Unexpected xorriso size output: $raw_output" >&2
-    exit 1
-  fi
-  echo $(( sector_count * 2048 ))
-}
-
 assemble_iso() {
   local output_iso="$OUTPUT_PATH"
   echo "[iso] Building ISO at $output_iso"
+  local isohdpfx="/usr/lib/ISOLINUX/isohdpfx.bin"
+  local isohybrid_args=()
+  if [[ -f "$isohdpfx" ]]; then
+    isohybrid_args=(-isohybrid-mbr "$isohdpfx" -isohybrid-gpt-basdat)
+  fi
   local output_dir="$(dirname "$output_iso")"
   local available_bytes
   available_bytes=$(df -PB1 "$output_dir" | awk 'NR==2 {print $4}')
@@ -1289,24 +800,26 @@ assemble_iso() {
     echo "[error] Failed to determine free space for $output_dir" >&2
     exit 1
   fi
-  local iso_bytes
-  iso_bytes=$(estimate_iso_size_bytes)
-  local safety_margin=$(( 100 * 1024 * 1024 ))
-  local estimated_bytes=$(( iso_bytes + safety_margin ))
+  local staging_bytes
+  staging_bytes=$(sudo du -sb "$ISO_DIR" | awk '{print $1}')
+  local estimated_bytes=$(( staging_bytes + staging_bytes / 20 + 104857600 ))
   if (( available_bytes < estimated_bytes )); then
     echo "[error] Not enough free space in $output_dir for ISO creation." >&2
     echo "[error] Estimated requirement: $(human_readable_bytes "$estimated_bytes"), available: $(human_readable_bytes "$available_bytes")." >&2
     echo "[hint] Free additional space or rerun with --output pointing to a larger volume." >&2
     exit 1
   fi
-  local iso_human
-  iso_human=$(human_readable_bytes "$iso_bytes")
-  echo "[iso] Estimated ISO size: $iso_human (plus safety margin)"
   rm -f "$output_iso"
-  local base_args=()
-  build_xorriso_base_args base_args
-  local xorriso_cmd=("sudo" "xorriso")
-  xorriso_cmd+=("${base_args[@]}" "-o" "$output_iso" "$ISO_DIR")
+  local xorriso_cmd=("sudo" "xorriso" -as mkisofs
+    -r -V "$ISO_LABEL" -J -l
+    -b isolinux/isolinux.bin
+    -c isolinux/boot.cat
+    -no-emul-boot -boot-load-size 4 -boot-info-table
+    -eltorito-alt-boot -e efi.img -no-emul-boot)
+  if (( ${#isohybrid_args[@]} )); then
+    xorriso_cmd+=(${isohybrid_args[@]})
+  fi
+  xorriso_cmd+=( -o "$output_iso" "$ISO_DIR" )
   "${xorriso_cmd[@]}"
   echo "[iso] ISO created: $output_iso"
 }
@@ -1334,10 +847,7 @@ main() {
         DISK_IMAGE_PATH="$2"; shift 2 ;;
       --disk-size)
         DISK_IMAGE_SIZE="$2"; shift 2 ;;
-      -c|--clean-work)
-        KEEP_WORK=0; shift ;;
       -k|--keep-work)
-        echo "[warn] --keep-work is the default behaviour; flag retained for compatibility" >&2
         KEEP_WORK=1; shift ;;
       -h|--help)
         usage; exit 0 ;;
@@ -1357,23 +867,11 @@ main() {
     ARCH="$normalized_target"
   fi
 
-  MIRROR_CANDIDATES=()
   if [[ -z "$MIRROR" ]]; then
     MIRROR="$(default_mirror_for_arch "$ARCH")"
-    CUSTOM_MIRROR=0
     echo "[mirror] Using default mirror for $ARCH: $MIRROR"
   else
-    CUSTOM_MIRROR=1
     echo "[mirror] Using custom mirror: $MIRROR"
-  fi
-  add_mirror_candidate "$MIRROR"
-  if [[ $CUSTOM_MIRROR -eq 0 ]]; then
-    while IFS= read -r fallback; do
-      add_mirror_candidate "$fallback"
-    done < <(fallback_mirrors_for_arch "$ARCH")
-    if (( ${#MIRROR_CANDIDATES[@]} > 1 )); then
-      echo "[mirror] Fallback mirrors registered: ${MIRROR_CANDIDATES[*]:1}"
-    fi
   fi
 
   local default_iso_path="$REPO_ROOT/output/ainux-$RELEASE-$ARCH.iso"
@@ -1385,11 +883,9 @@ main() {
   fi
   mkdir -p "$(dirname "$OUTPUT_PATH")"
 
-  validate_existing_metadata
   determine_efi_target
   check_dependencies
   prepare_directories
-  ensure_build_metadata
   bootstrap_base
   seed_configuration_files
   prepare_chroot_env
