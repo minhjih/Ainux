@@ -84,6 +84,7 @@ class Planner:
         steps: List[PlanStep] = []
         action = intent.action
         parameters = dict(intent.parameters)
+        parameters.setdefault("original_request", intent.raw_input)
 
         if action == "system.optimize_resources":
             steps.append(
@@ -91,7 +92,7 @@ class Planner:
                     id="collect_metrics",
                     action="system.collect_resource_metrics",
                     description="Collect CPU, memory, and IO usage to understand current load.",
-                    parameters={},
+                    parameters={"limit": parameters.get("limit", 10), "original_request": intent.raw_input},
                 )
             )
             steps.append(
@@ -99,7 +100,11 @@ class Planner:
                     id="analyze_hotspots",
                     action="system.analyze_resource_hotspots",
                     description="Analyze metrics to identify processes or services causing pressure.",
-                    parameters={},
+                    parameters={
+                        "cpu_threshold": parameters.get("cpu_threshold", 40.0),
+                        "memory_threshold": parameters.get("memory_threshold", 30.0),
+                        "original_request": intent.raw_input,
+                    },
                     depends_on=["collect_metrics"],
                 )
             )
@@ -118,7 +123,7 @@ class Planner:
                     id="list_processes",
                     action="process.enumerate",
                     description="List relevant processes and capture their current state.",
-                    parameters=parameters,
+                    parameters={"limit": parameters.get("limit", 25), **parameters},
                 )
             )
             steps.append(
@@ -236,6 +241,15 @@ class Planner:
                     description="Apply available system updates in non-interactive mode.",
                     parameters={"command": ["apt", "upgrade", "-y"]},
                     depends_on=["refresh_package_index"],
+                )
+            )
+        elif action == "system.execute_low_level":
+            steps.append(
+                PlanStep(
+                    id="compile_and_run",
+                    action="system.execute_low_level",
+                    description="Compile and execute the provided low-level program snippet.",
+                    parameters=parameters,
                 )
             )
         else:

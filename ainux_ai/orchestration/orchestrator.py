@@ -9,11 +9,18 @@ from typing import Dict, List, Optional, Protocol, Set, TYPE_CHECKING
 from ..client import ChatClient
 from .execution import (
     ActionExecutor,
+    AnalyzeResourceHotspotsCapability,
     ApplicationLauncherCapability,
+    ApplyResourceTuningCapability,
     BlueprintCapability,
     CapabilityRegistry,
+    CollectResourceMetricsCapability,
     DryRunCapability,
+    LowLevelCodeCapability,
     PointerControlCapability,
+    ProcessEnumerationCapability,
+    ProcessEvaluationCapability,
+    ProcessManagementCapability,
     ShellCommandCapability,
 )
 from .intent import IntentParser
@@ -71,15 +78,15 @@ class AinuxOrchestrator:
         planner = Planner(client=client)
         safety = SafetyChecker(client=client)
         registry = CapabilityRegistry()
-        registry.register(DryRunCapability(name="system.collect_resource_metrics"))
-        registry.register(DryRunCapability(name="system.analyze_resource_hotspots"))
-        registry.register(DryRunCapability(name="system.apply_resource_tuning"))
+        registry.register(CollectResourceMetricsCapability())
+        registry.register(AnalyzeResourceHotspotsCapability())
+        registry.register(ApplyResourceTuningCapability())
         registry.register(DryRunCapability(name="system.collect_task_requirements"))
         registry.register(DryRunCapability(name="scheduler.create_task_schedule"))
         registry.register(DryRunCapability(name="scheduler.publish_user_guidance"))
-        registry.register(DryRunCapability(name="process.enumerate"))
-        registry.register(DryRunCapability(name="process.evaluate_actions"))
-        registry.register(DryRunCapability(name="process.apply_management"))
+        registry.register(ProcessEnumerationCapability())
+        registry.register(ProcessEvaluationCapability())
+        registry.register(ProcessManagementCapability())
         registry.register(DryRunCapability(name="ui.collect_user_context"))
         registry.register(DryRunCapability(name="ui.present_walkthrough"))
         registry.register(DryRunCapability(name="ui.queue_actions"))
@@ -88,6 +95,7 @@ class AinuxOrchestrator:
         registry.register(ShellCommandCapability())
         registry.register(ApplicationLauncherCapability())
         registry.register(PointerControlCapability())
+        registry.register(LowLevelCodeCapability())
         executor = ActionExecutor(registry=registry)
         return cls(
             intent_parser=intent_parser,
