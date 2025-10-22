@@ -86,6 +86,16 @@ class IntentParser:
         confidence = 0.4
 
         pointer_keywords = ["마우스", "mouse", "커서", "포인터"]
+        terminal_keywords = [
+            "terminal",
+            "터미널",
+            "콘솔",
+            "console",
+            "shell",
+            "쉘",
+            "bash",
+            "zsh",
+        ]
         resource_keywords = ["cpu", "메모리", "memory", "ram", "자원", "resource", "load", "부하"]
         process_keywords = ["프로세스", "process", "작업", "kill", "종료", "pid", "백그라운드"]
         ui_keywords = ["도와", "ui", "interface", "창", "앱", "app", "실행", "어떻게", "사용법"]
@@ -95,6 +105,10 @@ class IntentParser:
             action = "ui.control_pointer"
             parameters = self._infer_pointer_parameters(request, lowered)
             confidence = 0.8
+        elif any(keyword in lowered for keyword in terminal_keywords):
+            action = "system.launch_application"
+            parameters = {"target": "terminal", "original_request": request}
+            confidence = 0.75
         elif any(keyword in lowered for keyword in resource_keywords):
             action = "system.optimize_resources"
             confidence = 0.7

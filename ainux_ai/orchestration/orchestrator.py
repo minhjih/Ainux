@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Protocol, Set, TYPE_CHECKING
 from ..client import ChatClient
 from .execution import (
     ActionExecutor,
+    ApplicationLauncherCapability,
     BlueprintCapability,
     CapabilityRegistry,
     DryRunCapability,
@@ -85,6 +86,7 @@ class AinuxOrchestrator:
         registry.register(DryRunCapability(name="analysis.review_request"))
         registry.register(BlueprintCapability())
         registry.register(ShellCommandCapability())
+        registry.register(ApplicationLauncherCapability())
         registry.register(PointerControlCapability())
         executor = ActionExecutor(registry=registry)
         return cls(

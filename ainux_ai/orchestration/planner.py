@@ -184,6 +184,15 @@ class Planner:
                     depends_on=["capture_pointer_state"],
                 )
             )
+        elif action == "system.launch_application":
+            steps.append(
+                PlanStep(
+                    id="launch_application",
+                    action="system.launch_application",
+                    description="Launch the requested desktop application using Ubuntu defaults.",
+                    parameters=parameters,
+                )
+            )
         elif action == "system.schedule_task":
             steps.append(
                 PlanStep(

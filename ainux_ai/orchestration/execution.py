@@ -153,6 +153,78 @@ class ShellCommandCapability:
 
 
 @dataclass
+class ApplicationLauncherCapability:
+    """Capability that launches common desktop applications such as terminals."""
+
+    name: str = "system.launch_application"
+    terminal_commands: Iterable[Iterable[str]] = field(
+        default_factory=lambda: (
+            ("gnome-terminal",),
+            ("x-terminal-emulator",),
+            ("xfce4-terminal",),
+            ("konsole",),
+            ("tilix",),
+            ("mate-terminal",),
+            ("lxterminal",),
+            ("xterm",),
+        )
+    )
+
+    def execute(self, step: PlanStep, context: Optional[Dict[str, object]] = None) -> ExecutionResult:
+        params = step.parameters or {}
+        command = params.get("command")
+        target = str(params.get("target") or "").lower()
+
+        candidates: List[List[str]] = []
+
+        if command:
+            if isinstance(command, str):
+                candidates.append(command.split())
+            elif isinstance(command, (list, tuple)):
+                candidates.append([str(part) for part in command])
+            else:
+                return ExecutionResult(
+                    step_id=step.id,
+                    status="error",
+                    error="Command must be a string or list",
+                )
+        elif target in {"terminal", "shell", "console"}:
+            candidates = [list(cmd) for cmd in self.terminal_commands]
+        else:
+            return ExecutionResult(
+                step_id=step.id,
+                status="blocked",
+                error="No launch command resolved for requested target",
+            )
+
+        errors: List[str] = []
+        for candidate in candidates:
+            if not candidate:
+                continue
+            try:
+                subprocess.Popen(candidate, start_new_session=True)
+            except FileNotFoundError:
+                errors.append(f"Command not found: {candidate[0]}")
+                continue
+            except Exception as exc:  # pragma: no cover - runtime guard
+                errors.append(str(exc))
+                continue
+            else:
+                launched = " ".join(candidate)
+                return ExecutionResult(
+                    step_id=step.id,
+                    status="success",
+                    output=f"Launched application: {launched}",
+                )
+
+        if errors:
+            error_message = "; ".join(errors)
+        else:
+            error_message = "Unable to launch application"
+        return ExecutionResult(step_id=step.id, status="error", error=error_message)
+
+
+@dataclass
 class BlueprintCapability:
     """Capability that renders blueprint files to disk for later execution."""
 
