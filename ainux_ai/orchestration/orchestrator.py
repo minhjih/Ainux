@@ -4,18 +4,27 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional, Protocol, Set, TYPE_CHECKING
 
 from ..client import ChatClient
 from .execution import (
     ActionExecutor,
+    AnalyzeResourceHotspotsCapability,
+    ApplicationLauncherCapability,
+    ApplyResourceTuningCapability,
     BlueprintCapability,
     CapabilityRegistry,
+    CollectResourceMetricsCapability,
     DryRunCapability,
+    LowLevelCodeCapability,
+    PointerControlCapability,
+    ProcessEnumerationCapability,
+    ProcessEvaluationCapability,
+    ProcessManagementCapability,
     ShellCommandCapability,
 )
 from .intent import IntentParser
-from .models import ExecutionResult, OrchestrationResult
+from .models import ExecutionResult, OrchestrationResult, PlanReview, PlanStep
 from .planner import Planner
 from .safety import SafetyChecker
 
@@ -26,6 +35,22 @@ if TYPE_CHECKING:
 
 class OrchestrationError(RuntimeError):
     """Raised when orchestration cannot proceed."""
+
+
+class OrchestrationObserver(Protocol):
+    """Observer interface for tracking orchestration progress."""
+
+    def on_stage(self, stage: str, detail: Optional[str] = None) -> None:
+        """Called whenever a high-level stage begins."""
+
+    def on_step_start(self, step: PlanStep, index: int, total: int) -> None:
+        """Called right before a plan step is executed."""
+
+    def on_step_result(self, result: ExecutionResult) -> None:
+        """Called after a plan step produces a result."""
+
+    def on_review(self, review: PlanReview) -> None:
+        """Called after each planner review round."""
 
 
 @dataclass
@@ -53,17 +78,24 @@ class AinuxOrchestrator:
         planner = Planner(client=client)
         safety = SafetyChecker(client=client)
         registry = CapabilityRegistry()
-        registry.register(DryRunCapability(name="hardware.apply_gpu_stack"))
-        registry.register(DryRunCapability(name="hardware.select_driver_combo"))
-        registry.register(DryRunCapability(name="inventory.collect_gpu_metadata"))
-        registry.register(DryRunCapability(name="scheduler.collect_targets"))
-        registry.register(DryRunCapability(name="scheduler.create_window"))
-        registry.register(DryRunCapability(name="communications.broadcast"))
-        registry.register(DryRunCapability(name="network.audit_state"))
-        registry.register(DryRunCapability(name="network.apply_changes"))
+        registry.register(CollectResourceMetricsCapability())
+        registry.register(AnalyzeResourceHotspotsCapability())
+        registry.register(ApplyResourceTuningCapability())
+        registry.register(DryRunCapability(name="system.collect_task_requirements"))
+        registry.register(DryRunCapability(name="scheduler.create_task_schedule"))
+        registry.register(DryRunCapability(name="scheduler.publish_user_guidance"))
+        registry.register(ProcessEnumerationCapability())
+        registry.register(ProcessEvaluationCapability())
+        registry.register(ProcessManagementCapability())
+        registry.register(DryRunCapability(name="ui.collect_user_context"))
+        registry.register(DryRunCapability(name="ui.present_walkthrough"))
+        registry.register(DryRunCapability(name="ui.queue_actions"))
         registry.register(DryRunCapability(name="analysis.review_request"))
         registry.register(BlueprintCapability())
         registry.register(ShellCommandCapability())
+        registry.register(ApplicationLauncherCapability())
+        registry.register(PointerControlCapability())
+        registry.register(LowLevelCodeCapability())
         executor = ActionExecutor(registry=registry)
         return cls(
             intent_parser=intent_parser,
@@ -80,8 +112,12 @@ class AinuxOrchestrator:
         *,
         context: Optional[Dict[str, object]] = None,
         execute: bool = True,
+        observer: Optional[OrchestrationObserver] = None,
     ) -> OrchestrationResult:
         """Run the full orchestration pipeline for *request*."""
+
+        if observer:
+            observer.on_stage("start", request)
 
         combined_context = dict(context or {})
         if self.fabric:
@@ -95,19 +131,95 @@ class AinuxOrchestrator:
             combined_context.setdefault("fabric", snapshot.to_context_payload())
 
         intent = self.intent_parser.parse(request, combined_context)
+        if observer:
+            observer.on_stage("intent", intent.action or intent.raw_input)
         if intent.context_snapshot is None:
             intent.context_snapshot = combined_context
 
         plan = self.planner.create_plan(intent, combined_context)
+        if observer:
+            observer.on_stage("plan", str(len(plan.steps)))
         safety = self.safety_checker.review(plan, combined_context)
+        if observer:
+            detail = f"approved={len(safety.approved_steps)} blocked={len(safety.blocked_steps)}"
+            observer.on_stage("safety", detail)
         if not safety.approved_steps and plan.steps:
             raise OrchestrationError("All plan steps were blocked by safety checks")
 
         execution_results: List[ExecutionResult] = []
+        reviews: List[PlanReview] = []
         if execute and safety.approved_steps:
-            execution_results = self.executor.execute_plan(safety.approved_steps, combined_context)
+            approved_ids: Set[str] = {step.id for step in safety.approved_steps}
+            pending_steps: List[PlanStep] = [
+                step for step in plan.steps if step.id in approved_ids
+            ]
+            completed_ids: Set[str] = set()
+            step_counter = 0
+
+            if observer:
+                observer.on_stage("execution", str(len(pending_steps)))
+
+            while pending_steps:
+                step = pending_steps.pop(0)
+                if step.id in completed_ids:
+                    continue
+
+                total_steps = len([s for s in plan.steps if s.id in approved_ids])
+                step_counter += 1
+                if observer:
+                    observer.on_step_start(step, step_counter, total_steps)
+
+                step_results = self.executor.execute_plan([step], combined_context)
+                execution_results.extend(step_results)
+                for result in step_results:
+                    if observer:
+                        observer.on_step_result(result)
+                    if result.status not in {"blocked", "error"}:
+                        completed_ids.add(result.step_id)
+
+                review = self.planner.review_execution(
+                    intent,
+                    plan,
+                    execution_results,
+                    combined_context,
+                )
+                reviews.append(review)
+                if observer:
+                    observer.on_review(review)
+
+                if review.plan is not plan:
+                    if observer:
+                        observer.on_stage("replan", str(len(review.plan.steps)))
+                    plan = review.plan
+                    safety = self.safety_checker.review(plan, combined_context)
+                    if observer:
+                        detail = (
+                            f"approved={len(safety.approved_steps)} "
+                            f"blocked={len(safety.blocked_steps)}"
+                        )
+                        observer.on_stage("safety", detail)
+                    if not safety.approved_steps and plan.steps:
+                        raise OrchestrationError(
+                            "All plan steps were blocked after planner review"
+                        )
+                    approved_ids = {step.id for step in safety.approved_steps}
+
+                if review.complete:
+                    break
+
+                pending_steps = [
+                    step
+                    for step in plan.steps
+                    if step.id not in completed_ids and step.id in approved_ids
+                ]
         else:
-            execution_results = []
+            reason = "dry-run" if not execute else "no-approved-steps"
+            if observer:
+                observer.on_stage("execution_skipped", reason)
+            if not execute:
+                reviews.append(
+                    self.planner.review_execution(intent, plan, execution_results, combined_context)
+                )
 
         if self.fabric:
             self.fabric.merge_metadata(
@@ -131,7 +243,16 @@ class AinuxOrchestrator:
                 },
             )
 
-        return OrchestrationResult(intent=intent, plan=plan, safety=safety, execution=execution_results)
+        if observer:
+            observer.on_stage("complete")
+
+        return OrchestrationResult(
+            intent=intent,
+            plan=plan,
+            safety=safety,
+            execution=execution_results,
+            reviews=reviews,
+        )
 
     def dry_run(self, request: str, context: Optional[Dict[str, object]] = None) -> OrchestrationResult:
         """Run orchestration but skip execution."""
@@ -141,5 +262,6 @@ class AinuxOrchestrator:
 
 __all__ = [
     "AinuxOrchestrator",
+    "OrchestrationObserver",
     "OrchestrationError",
 ]
