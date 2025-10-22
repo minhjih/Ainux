@@ -24,8 +24,15 @@ from .execution import (
     ShellCommandCapability,
 )
 from .intent import IntentParser
-from .models import ExecutionResult, OrchestrationResult, PlanReview, PlanStep
+from .models import (
+    ExecutionResult,
+    OrchestrationResult,
+    PlanReview,
+    PlanStep,
+    VerificationResult,
+)
 from .planner import Planner
+from .verification import ResultVerifier
 from .safety import SafetyChecker
 
 
@@ -52,6 +59,9 @@ class OrchestrationObserver(Protocol):
     def on_review(self, review: PlanReview) -> None:
         """Called after each planner review round."""
 
+    def on_verification(self, verification: VerificationResult) -> None:
+        """Called after each verification pass confirms progress."""
+
 
 @dataclass
 class AinuxOrchestrator:
@@ -61,6 +71,7 @@ class AinuxOrchestrator:
     planner: Planner
     safety_checker: SafetyChecker
     executor: ActionExecutor
+    verifier: ResultVerifier
     fabric: Optional["ContextFabric"] = None
     fabric_event_limit: int = 50
 
@@ -97,11 +108,13 @@ class AinuxOrchestrator:
         registry.register(PointerControlCapability())
         registry.register(LowLevelCodeCapability())
         executor = ActionExecutor(registry=registry)
+        verifier = ResultVerifier(client=client)
         return cls(
             intent_parser=intent_parser,
             planner=planner,
             safety_checker=safety,
             executor=executor,
+            verifier=verifier,
             fabric=fabric,
             fabric_event_limit=fabric_event_limit,
         )
@@ -148,6 +161,7 @@ class AinuxOrchestrator:
 
         execution_results: List[ExecutionResult] = []
         reviews: List[PlanReview] = []
+        verifications: List[VerificationResult] = []
         if execute and safety.approved_steps:
             approved_ids: Set[str] = {step.id for step in safety.approved_steps}
             pending_steps: List[PlanStep] = [
@@ -187,6 +201,19 @@ class AinuxOrchestrator:
                 if observer:
                     observer.on_review(review)
 
+                verification = self.verifier.verify(
+                    intent,
+                    plan,
+                    execution_results,
+                    combined_context,
+                )
+                verifications.append(verification)
+                if observer and hasattr(observer, "on_verification"):
+                    observer.on_verification(verification)
+
+                if verification.satisfied:
+                    break
+
                 if review.plan is not plan:
                     if observer:
                         observer.on_stage("replan", str(len(review.plan.steps)))
@@ -216,10 +243,22 @@ class AinuxOrchestrator:
             reason = "dry-run" if not execute else "no-approved-steps"
             if observer:
                 observer.on_stage("execution_skipped", reason)
-            if not execute:
-                reviews.append(
-                    self.planner.review_execution(intent, plan, execution_results, combined_context)
-                )
+            review = self.planner.review_execution(
+                intent,
+                plan,
+                execution_results,
+                combined_context,
+            )
+            reviews.append(review)
+            verification = self.verifier.verify(
+                intent,
+                plan,
+                execution_results,
+                combined_context,
+            )
+            verifications.append(verification)
+            if observer and hasattr(observer, "on_verification"):
+                observer.on_verification(verification)
 
         if self.fabric:
             self.fabric.merge_metadata(
@@ -252,6 +291,7 @@ class AinuxOrchestrator:
             safety=safety,
             execution=execution_results,
             reviews=reviews,
+            verifications=verifications,
         )
 
     def dry_run(self, request: str, context: Optional[Dict[str, object]] = None) -> OrchestrationResult:

@@ -57,7 +57,7 @@ from .infrastructure import (
     HealthReport,
 )
 from .orchestration import AinuxOrchestrator, OrchestrationError, OrchestrationObserver
-from .orchestration.models import ExecutionResult, PlanReview, PlanStep
+from .orchestration.models import ExecutionResult, PlanReview, PlanStep, VerificationResult
 
 
 DEFAULT_UPSTREAM_REPO = "https://github.com/minhjih/Ainux.git"
@@ -2347,6 +2347,14 @@ class ConsoleAssistObserver(OrchestrationObserver):
         elif review.next_steps:
             self._log(f"추가 단계 {len(review.next_steps)}개를 준비합니다.")
 
+    def on_verification(self, verification: VerificationResult) -> None:
+        status = "검증 완료" if verification.satisfied else "검증 실패"
+        confidence = f"{verification.confidence:.2f}"
+        message = status + f" (신뢰도 {confidence})"
+        if verification.reasoning:
+            message += f" → {self._truncate(verification.reasoning)}"
+        self._log(message)
+
     @staticmethod
     def _truncate(text: str, limit: int = 120) -> str:
         cleaned = " ".join(text.strip().split())
@@ -2412,6 +2420,15 @@ def _print_assist_summary(result, *, executed: bool) -> None:
     else:
         print("\n실행은 건너뛰었습니다. (--dry-run)")
 
+    if result.verifications:
+        print("\n검증 결과:")
+        for index, verification in enumerate(result.verifications, 1):
+            status = "충족" if verification.satisfied else "미충족"
+            line = f"  - #{index}: {status} (신뢰도 {verification.confidence:.2f})"
+            if verification.reasoning:
+                line += f" → {verification.reasoning}"
+            print(line)
+
     message = next((review.message for review in reversed(result.reviews) if review.message), None)
     if message:
         print(f"\n추가 안내: {message}")
@@ -2453,6 +2470,14 @@ def _orchestration_result_to_dict(result) -> Dict[str, object]:
                 "error": entry.error,
             }
             for entry in result.execution
+        ],
+        "verifications": [
+            {
+                "satisfied": verification.satisfied,
+                "confidence": verification.confidence,
+                "reasoning": verification.reasoning,
+            }
+            for verification in result.verifications
         ],
     }
 
@@ -2505,6 +2530,25 @@ def _print_orchestration_result(payload: Dict[str, object]) -> None:
         print(line)
     if not payload.get("execution"):
         print("- (skipped)")
+
+    verifications = payload.get("verifications") or []
+    if verifications:
+        print("\nVerification:")
+        for index, verification in enumerate(verifications, 1):
+            status = "ok" if verification.get("satisfied") else "retry"
+            confidence = verification.get("confidence")
+            if confidence is not None:
+                try:
+                    confidence_str = f"{float(confidence):.2f}"
+                except (TypeError, ValueError):
+                    confidence_str = "?"
+            else:
+                confidence_str = "?"
+            line = f"- round {index}: {status} (confidence={confidence_str})"
+            reasoning = verification.get("reasoning")
+            if reasoning:
+                line += f" → {reasoning}"
+            print(line)
 
 
 def _parse_response_format(value: Optional[str]) -> Optional[Dict[str, object]]:

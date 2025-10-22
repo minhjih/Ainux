@@ -8,6 +8,7 @@ from .models import (
     PlanReview,
     PlanStep,
     SafetyReport,
+    VerificationResult,
 )
 from .orchestrator import AinuxOrchestrator, OrchestrationError, OrchestrationObserver
 
@@ -19,6 +20,7 @@ __all__ = [
     "PlanReview",
     "PlanStep",
     "SafetyReport",
+    "VerificationResult",
     "AinuxOrchestrator",
     "OrchestrationObserver",
     "OrchestrationError",

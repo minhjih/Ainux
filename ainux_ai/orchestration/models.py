@@ -49,6 +49,15 @@ class PlanReview:
 
 
 @dataclass
+class VerificationResult:
+    """Outcome returned by the result verifier after each execution round."""
+
+    satisfied: bool
+    confidence: float = 0.0
+    reasoning: Optional[str] = None
+
+
+@dataclass
 class SafetyReport:
     """Planner review outcome describing approved and blocked actions."""
 
@@ -77,3 +86,4 @@ class OrchestrationResult:
     safety: SafetyReport
     execution: List[ExecutionResult]
     reviews: List[PlanReview] = field(default_factory=list)
+    verifications: List[VerificationResult] = field(default_factory=list)
