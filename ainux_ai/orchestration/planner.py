@@ -138,6 +138,7 @@ class Planner:
                     depends_on=["list_processes"],
                 )
             )
+        elif action == "ui.control_pointer":
             steps.append(
                 PlanStep(
                     id="apply_process_change",
@@ -156,6 +157,7 @@ class Planner:
                     parameters=parameters,
                 )
             )
+        elif action == "system.launch_application":
             steps.append(
                 PlanStep(
                     id="present_walkthrough",
