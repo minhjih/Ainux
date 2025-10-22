@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import shutil
+import subprocess
 import sys
 import time
 from dataclasses import asdict
@@ -177,6 +179,87 @@ def build_parser() -> argparse.ArgumentParser:
         help="Fail instead of prompting when required values are missing.",
     )
     set_key_parser.set_defaults(func=handle_set_key)
+
+    assist_parser = subcommands.add_parser(
+        "assist",
+        help="Ask Ainux to handle an OS task from natural language input.",
+    )
+    assist_parser.add_argument(
+        "request",
+        nargs="?",
+        help="Natural language request. Reads stdin when omitted.",
+    )
+    assist_parser.add_argument(
+        "--provider",
+        help="Provider name for AI-assisted planning (falls back to heuristics when missing).",
+    )
+    assist_parser.add_argument(
+        "--timeout",
+        type=int,
+        default=60,
+        help="HTTP timeout in seconds (default: 60).",
+    )
+    assist_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview the plan without executing commands.",
+    )
+    assist_parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Use heuristic planning even when a provider is configured.",
+    )
+    assist_parser.add_argument(
+        "--no-context",
+        action="store_true",
+        help="Skip loading and updating the shared context fabric.",
+    )
+    assist_parser.add_argument(
+        "--fabric-path",
+        help="Override the path used to load/save the context fabric.",
+    )
+    assist_parser.set_defaults(func=handle_assist)
+
+    self_update_parser = subcommands.add_parser(
+        "self-update",
+        help="Update the installed ainux-ai tools to the latest published release.",
+    )
+    self_update_parser.add_argument(
+        "--package",
+        default="ainux-ai",
+        help="Python package name to update (default: ainux-ai).",
+    )
+    self_update_parser.add_argument(
+        "--version",
+        help="Install a specific version instead of the latest available.",
+    )
+    self_update_parser.add_argument(
+        "--index-url",
+        help="Override the Python package index URL used for the update.",
+    )
+    self_update_parser.add_argument(
+        "--extra-index-url",
+        action="append",
+        default=[],
+        metavar="URL",
+        help="Additional package indexes to consult during the update.",
+    )
+    self_update_parser.add_argument(
+        "--pre",
+        action="store_true",
+        help="Allow installation of pre-release versions when available.",
+    )
+    self_update_parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Disable the pip download cache during the update.",
+    )
+    self_update_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show the pip command without executing it.",
+    )
+    self_update_parser.set_defaults(func=handle_self_update)
 
     orchestrate_parser = subcommands.add_parser(
         "orchestrate",
@@ -1053,6 +1136,97 @@ def handle_set_key(args: argparse.Namespace) -> int:
     print(f"{verb} provider '{resolved_name}' in {saved_path}.")
     if args.make_default:
         print(f"'{resolved_name}' marked as default provider.")
+    return 0
+
+
+def handle_self_update(args: argparse.Namespace) -> int:
+    python_executable = sys.executable or shutil.which("python3") or shutil.which("python")
+    if not python_executable:
+        print("Unable to locate a Python interpreter for pip updates.", file=sys.stderr)
+        return 1
+
+    command: List[str] = [python_executable, "-m", "pip", "install", "--upgrade"]
+    if args.pre:
+        command.append("--pre")
+    if args.no_cache:
+        command.append("--no-cache-dir")
+    if args.index_url:
+        command.extend(["--index-url", args.index_url])
+    for extra_index in args.extra_index_url:
+        command.extend(["--extra-index-url", extra_index])
+
+    package_spec = args.package
+    if args.version:
+        package_spec = f"{package_spec}=={args.version}"
+    command.append(package_spec)
+
+    preview = shlex.join(command)
+    print(f"[info] Preparing to update Ainux tooling via: {preview}")
+
+    if args.dry_run:
+        print("[dry-run] Update command not executed.")
+        return 0
+
+    try:
+        result = subprocess.run(command, check=False)
+    except FileNotFoundError as exc:
+        print(f"Failed to execute pip: {exc}", file=sys.stderr)
+        return 1
+
+    if result.returncode != 0:
+        print(f"pip exited with status {result.returncode}", file=sys.stderr)
+        return result.returncode
+
+    print("Ainux AI tooling is now up to date.")
+    return 0
+
+
+def handle_assist(args: argparse.Namespace) -> int:
+    request = args.request
+    if not request:
+        if sys.stdin.isatty():
+            request = input("무엇을 도와드릴까요? ")
+        else:
+            request = sys.stdin.read()
+    if not request or not request.strip():
+        raise ConfigError("No request supplied for assist command")
+    request = request.strip()
+
+    fabric: Optional[ContextFabric] = None
+    fabric_path: Optional[Path] = None
+    if not args.no_context:
+        fabric, fabric_path = _load_context_fabric(args.fabric_path)
+
+    client = None
+    provider_warning: Optional[str] = None
+    if not args.offline:
+        try:
+            provider = resolve_provider(args.provider)
+        except ConfigError as exc:
+            provider_warning = str(exc)
+        else:
+            client = ChatClient(provider, timeout=args.timeout)
+
+    orchestrator = AinuxOrchestrator.with_client(client, fabric=fabric)
+
+    try:
+        result = orchestrator.orchestrate(request, context={}, execute=not args.dry_run)
+    except OrchestrationError as exc:
+        print(f"Orchestration failed: {exc}", file=sys.stderr)
+        return 1
+
+    _print_assist_summary(result, executed=not args.dry_run)
+
+    if result.safety.blocked_steps:
+        print("[info] 일부 단계는 안전 검토에서 차단되었습니다.", file=sys.stderr)
+
+    if provider_warning:
+        print(f"[info] {provider_warning}. 휴리스틱 모드로 진행했습니다.", file=sys.stderr)
+
+    if fabric is not None and not args.no_context:
+        saved_path = fabric.save(fabric_path)
+        print(f"[info] Context fabric updated: {saved_path}", file=sys.stderr)
+
     return 0
 
 
@@ -1982,6 +2156,68 @@ def _append_history(
     with history_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry))
         handle.write("\n")
+
+
+def _print_assist_summary(result, *, executed: bool) -> None:
+    intent = result.intent
+    try:
+        confidence = f"{float(intent.confidence):.2f}"
+    except (TypeError, ValueError):
+        confidence = "?"
+
+    print("=== Ainux Assist ===")
+    print(f"요청: {intent.raw_input}")
+    print(f"이해한 작업: {intent.action} (신뢰도 {confidence})")
+    if intent.reasoning:
+        print(f"사유: {intent.reasoning}")
+    if intent.parameters:
+        print("추론된 매개변수:", json.dumps(intent.parameters, ensure_ascii=False))
+
+    if result.plan.notes:
+        print(f"계획 메모: {result.plan.notes}")
+
+    if result.plan.steps:
+        print("\n계획:")
+        for index, step in enumerate(result.plan.steps, 1):
+            description = (step.description or "").strip() or step.action
+            print(f"  {index}. {description}")
+            if step.action and step.action != description:
+                print(f"     ↳ action: {step.action}")
+            if step.parameters:
+                print("     ↳ parameters:", json.dumps(step.parameters, ensure_ascii=False))
+    else:
+        print("\n계획: (없음)")
+
+    if result.safety.warnings:
+        print("\n안전 경고:")
+        for warning in result.safety.warnings:
+            print(f"  - {warning}")
+    if result.safety.rationale:
+        print(f"안전 검토 근거: {result.safety.rationale}")
+    if result.safety.blocked_steps:
+        print("\n차단된 단계:")
+        for step in result.safety.blocked_steps:
+            description = step.description or step.action
+            print(f"  - {step.id}: {description}")
+
+    if executed:
+        print("\n실행 결과:")
+        if result.execution:
+            for entry in result.execution:
+                line = f"  - {entry.step_id}: {entry.status}"
+                if entry.output:
+                    line += f" → {entry.output}"
+                if entry.error:
+                    line += f" (오류: {entry.error})"
+                print(line)
+        else:
+            print("  - 실행할 단계가 없었습니다.")
+    else:
+        print("\n실행은 건너뛰었습니다. (--dry-run)")
+
+    message = next((review.message for review in reversed(result.reviews) if review.message), None)
+    if message:
+        print(f"\n추가 안내: {message}")
 
 
 def _orchestration_result_to_dict(result) -> Dict[str, object]:
