@@ -12,29 +12,56 @@ def prepare_low_level_parameters(parameters: Dict[str, object]) -> Dict[str, obj
     """Return a copy of *parameters* with synthesized low-level source code."""
 
     params = dict(parameters or {})
+    metadata: Dict[str, object] = dict(params.get("_ainux_low_level") or {})
+    metadata.setdefault("synthesized_source", False)
+    metadata.setdefault("target", None)
+
     raw_source = params.get("source") or params.get("code")
     if isinstance(raw_source, str) and raw_source.strip():
+        metadata["provided_source"] = True
+        params["_ainux_low_level"] = metadata
         return params
     if raw_source and not isinstance(raw_source, str):
+        metadata["provided_source"] = True
+        params["_ainux_low_level"] = metadata
         return params
 
     request = str(params.get("original_request") or "").strip()
+    candidate_token: Optional[str] = None
     target = _extract_explicit_target(params)
+    if target:
+        candidate_token = target[0]
     if not target and request:
-        target = infer_low_level_target(request)
+        inferred = infer_low_level_target(request)
+        if inferred:
+            target = inferred
+            candidate_token = inferred[0]
 
     if not target:
+        candidate = params.get("target") or params.get("program") or params.get("executable")
+        if isinstance(candidate, str) and candidate.strip():
+            candidate_token = candidate.strip()
+        if candidate_token:
+            metadata["candidate"] = candidate_token
+        params["_ainux_low_level"] = metadata
         return params
 
     executable, extra_args = target
+    metadata["target"] = {"executable": executable, "args": list(extra_args)}
+    if executable:
+        metadata["candidate"] = executable
     language = str(params.get("language") or "assembly").lower()
+    params.setdefault("args", list(extra_args))
     if language in {"asm", "assembly", "machine", "binary"}:
         params["language"] = "assembly"
         params["source"] = generate_assembly_launcher(executable, extra_args)
+        metadata["synthesized_source"] = True
     else:
         params["language"] = "c"
         params["source"] = generate_c_launcher(executable, extra_args)
+        metadata["synthesized_source"] = True
     params.pop("code", None)
+    params["_ainux_low_level"] = metadata
     return params
 
 

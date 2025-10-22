@@ -250,13 +250,58 @@ class Planner:
                 )
             )
         elif action == "system.execute_low_level":
+            raw_source = parameters.get("source") or parameters.get("code")
             low_level_parameters = prepare_low_level_parameters(parameters)
+            metadata = (
+                low_level_parameters.get("_ainux_low_level")
+                if isinstance(low_level_parameters, dict)
+                else None
+            )
+            inspect_dep: List[str] = []
+            if not (isinstance(raw_source, str) and raw_source.strip()):
+                inspect_params = {
+                    "target": None,
+                    "candidate": None,
+                    "original_request": intent.raw_input,
+                }
+                if isinstance(metadata, dict):
+                    candidate = metadata.get("candidate")
+                    target_info = metadata.get("target") or {}
+                    if isinstance(candidate, str) and candidate.strip():
+                        inspect_params["target"] = candidate.strip()
+                        inspect_params["candidate"] = candidate.strip()
+                    elif isinstance(target_info, dict):
+                        executable = target_info.get("executable")
+                        if isinstance(executable, str) and executable.strip():
+                            inspect_params["target"] = executable.strip()
+                    if metadata:
+                        inspect_params["_ainux_low_level"] = metadata
+                else:
+                    candidate = parameters.get("target") or parameters.get("program")
+                    if isinstance(candidate, str) and candidate.strip():
+                        inspect_params["target"] = candidate.strip()
+
+                filtered_params = {
+                    key: value
+                    for key, value in inspect_params.items()
+                    if value not in (None, "")
+                }
+                steps.append(
+                    PlanStep(
+                        id="inspect_command",
+                        action="system.inspect_command",
+                        description="Collect details about the requested executable before generating code.",
+                        parameters=filtered_params,
+                    )
+                )
+                inspect_dep.append("inspect_command")
             steps.append(
                 PlanStep(
                     id="compile_and_run",
                     action="system.execute_low_level",
                     description="Compile and execute the provided low-level program snippet.",
                     parameters=low_level_parameters,
+                    depends_on=inspect_dep,
                 )
             )
         else:

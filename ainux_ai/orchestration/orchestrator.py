@@ -15,6 +15,7 @@ from .execution import (
     BlueprintCapability,
     CapabilityRegistry,
     CollectResourceMetricsCapability,
+    CommandInspectionCapability,
     DryRunCapability,
     LowLevelCodeCapability,
     PointerControlCapability,
@@ -90,6 +91,7 @@ class AinuxOrchestrator:
         safety = SafetyChecker(client=client)
         registry = CapabilityRegistry()
         registry.register(CollectResourceMetricsCapability())
+        registry.register(CommandInspectionCapability())
         registry.register(AnalyzeResourceHotspotsCapability())
         registry.register(ApplyResourceTuningCapability())
         registry.register(DryRunCapability(name="system.collect_task_requirements"))

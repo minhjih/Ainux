@@ -9,9 +9,10 @@ import os
 import shlex
 import signal
 import tempfile
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, MutableMapping, Optional, Protocol
+from typing import Dict, Iterable, List, Mapping, MutableMapping, Optional, Protocol, Tuple
 
 try:  # pragma: no cover - optional runtime dependency
     import pyautogui  # type: ignore
@@ -166,6 +167,93 @@ class DryRunCapability:
         return ExecutionResult(
             step_id=step.id,
             status="dry_run",
+            output=json.dumps(payload, ensure_ascii=False),
+        )
+
+
+@dataclass
+class CommandInspectionCapability:
+    """Gather information about a command or executable candidate."""
+
+    name: str = "system.inspect_command"
+    max_bytes: int = 32_768
+
+    def execute(self, step: PlanStep, context: Optional[Dict[str, object]] = None) -> ExecutionResult:
+        params = step.parameters or {}
+        candidate = params.get("target") or params.get("command") or params.get("candidate")
+        if isinstance(candidate, (list, tuple)) and candidate:
+            candidate = candidate[0]
+        if not isinstance(candidate, str) or not candidate.strip():
+            original = params.get("original_request")
+            if isinstance(original, str) and original.strip():
+                candidate = original.strip().split()[0]
+        if not isinstance(candidate, str) or not candidate.strip():
+            return ExecutionResult(
+                step_id=step.id,
+                status="blocked",
+                error="No command candidate provided for inspection",
+            )
+
+        candidate = candidate.strip()
+        observations: List[Dict[str, object]] = []
+        resolved = shutil.which(candidate)
+        if resolved:
+            observations.append({"type": "which", "path": resolved})
+
+        commands: List[Tuple[str, List[str]]] = [
+            ("which", ["which", candidate]),
+            ("type", ["bash", "-lc", f"type {shlex.quote(candidate)}"]),
+            ("apt-cache policy", ["apt-cache", "policy", candidate]),
+        ]
+
+        if resolved:
+            commands.extend(
+                [
+                    ("ls", ["ls", "-l", resolved]),
+                    ("file", ["file", resolved]),
+                ]
+            )
+
+        for label, command in commands:
+            try:
+                result = subprocess.run(
+                    command,
+                    capture_output=True,
+                    check=False,
+                    text=True,
+                    timeout=5,
+                )
+            except FileNotFoundError:
+                observations.append({"type": label, "error": "command not available"})
+                continue
+            except subprocess.TimeoutExpired:
+                observations.append({"type": label, "error": "timed out"})
+                continue
+
+            entry: Dict[str, object] = {
+                "type": label,
+                "returncode": result.returncode,
+            }
+            stdout = (result.stdout or "").strip()
+            stderr = (result.stderr or "").strip()
+            if stdout:
+                entry["stdout"] = stdout[-self.max_bytes :]
+                if not resolved and label in {"which", "type"}:
+                    first_line = stdout.splitlines()[0]
+                    if os.path.isabs(first_line) and os.access(first_line, os.X_OK):
+                        resolved = first_line
+            if stderr:
+                entry["stderr"] = stderr[-self.max_bytes :]
+            observations.append(entry)
+
+        payload = {
+            "candidate": candidate,
+            "resolved_path": resolved,
+            "observations": observations,
+        }
+        return ExecutionResult(
+            step_id=step.id,
+            status="success",
             output=json.dumps(payload, ensure_ascii=False),
         )
 
