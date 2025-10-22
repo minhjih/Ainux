@@ -60,7 +60,7 @@ from .orchestration import AinuxOrchestrator, OrchestrationError, OrchestrationO
 from .orchestration.models import ExecutionResult, PlanReview, PlanStep
 
 
-DEFAULT_UPSTREAM_REPO = "https://github.com/ainux-os/Ainux.git"
+DEFAULT_UPSTREAM_REPO = "https://github.com/minhjih/Ainux.git"
 DEFAULT_UPSTREAM_REF = "main"
 from .ui import AinuxUIServer, UIServerConfig
 

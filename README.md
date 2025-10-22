@@ -70,7 +70,7 @@ Ainux ISO/툴킷에는 "Ainux AI"라 부르는 자연어 기반 자동화 스택
 
 프로세스 제어 요청(예: “백그라운드에서 돌아가는 python 프로세스 종료해줘”)은 `process.enumerate` → `process.evaluate_actions` → `process.apply_management` 순서로 실행되며, 요청에 “종료”, “kill”이 포함되면 자동으로 SIGTERM을 전송합니다. “우선순위 낮춰줘”처럼 우선순위 조정이 필요한 경우에는 `renice`로 대체합니다.
 
-또한 “어셈블리 코드 실행해줘”처럼 저수준 제어를 원하는 경우 `system.execute_low_level` 기능이 임시 디렉터리에 C/어셈블리 코드를 컴파일하거나, 16진수로 제공된 기계어를 바이너리로 저장해 직접 실행합니다. 모든 실행 결과는 CLI 관찰자에 실시간으로 스트리밍되므로 어떤 단계가 실제로 실행되었는지 바로 확인할 수 있습니다.
+또한 “어셈블리 코드 실행해줘”처럼 저수준 제어를 원하는 경우 `system.execute_low_level` 기능이 임시 디렉터리에 C/어셈블리 코드를 컴파일하거나, 16진수로 제공된 기계어를 바이너리로 저장해 직접 실행합니다. 사용자가 “assembly로 firefox 실행해줘”처럼 대상 프로그램만 언급해도 플래너가 자동으로 실행 파일 경로를 찾고 x86_64용 어셈블리 런처(필요 시 C 스텁)를 생성해 컴파일합니다. 모든 실행 결과는 CLI 관찰자에 실시간으로 스트리밍되므로 어떤 단계가 실제로 실행되었는지 바로 확인할 수 있습니다.
 
 ### 설치 이후 Ainux AI 업데이트
 
@@ -80,7 +80,7 @@ ISO로 설치된 시스템에서도 내장된 `ainux_ai` 모듈을 최신 GitHub
 sudo ainux-client self-update
 ```
 
-명령은 우선 `git`이 설치되어 있는지 확인한 뒤, 기본 원격 저장소(`https://github.com/ainux-os/Ainux.git`)에서 지정한 브랜치(기본값은 `main`)를 얕은 복제로 내려받아 현재 설치된 `/usr/local/lib/ainux/ainux_ai` 디렉터리를 원자적으로 교체합니다. `git`이 없거나 방화벽으로 차단된 환경에서는 GitHub codeload tarball을 자동으로 내려받아 동일한 절차를 수행합니다.
+명령은 우선 `git`이 설치되어 있는지 확인한 뒤, 기본 원격 저장소(`https://github.com/minhjih/Ainux.git`)에서 지정한 브랜치(기본값은 `main`)를 얕은 복제로 내려받아 현재 설치된 `/usr/local/lib/ainux/ainux_ai` 디렉터리를 원자적으로 교체합니다. `git`이 없거나 방화벽으로 차단된 환경에서는 GitHub codeload tarball을 자동으로 내려받아 동일한 절차를 수행합니다.
 
 ```bash
 ainux-client self-update --dry-run
