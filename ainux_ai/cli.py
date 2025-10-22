@@ -4,14 +4,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import shutil
+import subprocess
 import sys
+import tarfile
+import tempfile
 import time
 from dataclasses import asdict
 from datetime import datetime, timezone
 from getpass import getpass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from urllib.error import URLError
+from urllib.request import urlopen
 
 from . import __version__
 from .context import ContextFabric, default_fabric_path, load_fabric
@@ -51,6 +57,10 @@ from .infrastructure import (
     HealthReport,
 )
 from .orchestration import AinuxOrchestrator, OrchestrationError
+
+
+DEFAULT_UPSTREAM_REPO = "https://github.com/ainux-os/Ainux.git"
+DEFAULT_UPSTREAM_REF = "main"
 from .ui import AinuxUIServer, UIServerConfig
 
 
@@ -177,6 +187,87 @@ def build_parser() -> argparse.ArgumentParser:
         help="Fail instead of prompting when required values are missing.",
     )
     set_key_parser.set_defaults(func=handle_set_key)
+
+    assist_parser = subcommands.add_parser(
+        "assist",
+        help="Ask Ainux to handle an OS task from natural language input.",
+    )
+    assist_parser.add_argument(
+        "request",
+        nargs="?",
+        help="Natural language request. Reads stdin when omitted.",
+    )
+    assist_parser.add_argument(
+        "--provider",
+        help="Provider name for AI-assisted planning (falls back to heuristics when missing).",
+    )
+    assist_parser.add_argument(
+        "--timeout",
+        type=int,
+        default=60,
+        help="HTTP timeout in seconds (default: 60).",
+    )
+    assist_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview the plan without executing commands.",
+    )
+    assist_parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Use heuristic planning even when a provider is configured.",
+    )
+    assist_parser.add_argument(
+        "--no-context",
+        action="store_true",
+        help="Skip loading and updating the shared context fabric.",
+    )
+    assist_parser.add_argument(
+        "--fabric-path",
+        help="Override the path used to load/save the context fabric.",
+    )
+    assist_parser.set_defaults(func=handle_assist)
+
+    self_update_parser = subcommands.add_parser(
+        "self-update",
+        help="Update the installed ainux-ai tools from the upstream Git repository.",
+    )
+    self_update_parser.add_argument(
+        "--repo-url",
+        default=DEFAULT_UPSTREAM_REPO,
+        help=(
+            "Git repository URL to pull updates from (default:"
+            f" {DEFAULT_UPSTREAM_REPO})."
+        ),
+    )
+    self_update_parser.add_argument(
+        "--ref",
+        default=DEFAULT_UPSTREAM_REF,
+        help=(
+            "Branch, tag, or commit to check out from the upstream repository"
+            f" (default: {DEFAULT_UPSTREAM_REF})."
+        ),
+    )
+    self_update_parser.add_argument(
+        "--tarball-url",
+        help=(
+            "Fallback tarball URL to download when git is unavailable."
+            " Defaults to the GitHub codeload URL derived from --repo-url."
+        ),
+    )
+    self_update_parser.add_argument(
+        "--install-root",
+        help=(
+            "Root directory that contains the ainux_ai package to replace."
+            " Defaults to the directory two levels above this CLI module."
+        ),
+    )
+    self_update_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview the update steps without downloading or modifying files.",
+    )
+    self_update_parser.set_defaults(func=handle_self_update)
 
     orchestrate_parser = subcommands.add_parser(
         "orchestrate",
@@ -1053,6 +1144,204 @@ def handle_set_key(args: argparse.Namespace) -> int:
     print(f"{verb} provider '{resolved_name}' in {saved_path}.")
     if args.make_default:
         print(f"'{resolved_name}' marked as default provider.")
+    return 0
+
+
+def derive_tarball_url(repo_url: str, ref: str) -> Optional[str]:
+    if not repo_url:
+        return None
+    normalized = repo_url.rstrip("/")
+    if normalized.endswith(".git"):
+        normalized = normalized[:-4]
+    github_prefix = "https://github.com/"
+    if normalized.startswith(github_prefix):
+        repo_path = normalized[len(github_prefix) :]
+        return f"https://codeload.github.com/{repo_path}/tar.gz/{ref}" if ref else f"https://codeload.github.com/{repo_path}/tar.gz/main"
+    return None
+
+
+def find_repo_root(extracted_dir: Path) -> Optional[Path]:
+    if not extracted_dir.exists():
+        return None
+    if (extracted_dir / "ainux_ai").is_dir():
+        return extracted_dir
+    for child in extracted_dir.iterdir():
+        if child.is_dir() and (child / "ainux_ai").is_dir():
+            return child
+    return None
+
+
+def handle_self_update(args: argparse.Namespace) -> int:
+    repo_url = args.repo_url or DEFAULT_UPSTREAM_REPO
+    ref = args.ref or DEFAULT_UPSTREAM_REF
+    install_root = Path(args.install_root).expanduser() if args.install_root else Path(__file__).resolve().parent.parent
+
+    if not install_root.exists():
+        print(f"Install root {install_root} does not exist.", file=sys.stderr)
+        return 1
+
+    target_package = install_root / "ainux_ai"
+    if not target_package.exists():
+        print(
+            f"No 'ainux_ai' package found under {install_root}. Use --install-root to point to the correct directory.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"[info] Updating Ainux tooling in {install_root} from {repo_url}@{ref}")
+
+    if args.dry_run:
+        print("[dry-run] Skipping download and install because --dry-run was supplied.")
+        return 0
+
+    temp_dir = Path(tempfile.mkdtemp(prefix="ainux-self-update-"))
+    checkout_dir: Optional[Path] = None
+
+    try:
+        git_binary = shutil.which("git")
+        if git_binary:
+            checkout_dir = temp_dir / "checkout"
+            command = [git_binary, "clone", "--depth", "1"]
+            if ref:
+                command.extend(["--branch", ref])
+            command.extend([repo_url, str(checkout_dir)])
+            print(f"[info] Cloning repository via: {shlex.join(command)}")
+            result = subprocess.run(command, check=False)
+            if result.returncode != 0:
+                print(
+                    f"[warn] git clone exited with status {result.returncode}; falling back to tarball download.",
+                    file=sys.stderr,
+                )
+                checkout_dir = None
+        else:
+            print("[info] git binary not found; attempting tarball download instead.")
+
+        if checkout_dir is None:
+            tarball_url = args.tarball_url
+            if not tarball_url:
+                tarball_url = derive_tarball_url(repo_url, ref)
+            if not tarball_url:
+                print(
+                    "Unable to derive a tarball URL. Provide one explicitly via --tarball-url.",
+                    file=sys.stderr,
+                )
+                return 1
+
+            archive_path = temp_dir / "source.tar.gz"
+            print(f"[info] Downloading tarball from {tarball_url}")
+            try:
+                with urlopen(tarball_url) as response, archive_path.open("wb") as archive_file:
+                    shutil.copyfileobj(response, archive_file)
+            except URLError as exc:
+                print(f"Failed to download update tarball: {exc}", file=sys.stderr)
+                return 1
+
+            extracted_dir = temp_dir / "extracted"
+            extracted_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                with tarfile.open(archive_path, "r:gz") as archive:
+                    archive.extractall(path=extracted_dir)
+            except (tarfile.TarError, OSError) as exc:
+                print(f"Failed to extract update tarball: {exc}", file=sys.stderr)
+                return 1
+
+            checkout_dir = find_repo_root(extracted_dir)
+            if checkout_dir is None:
+                print(
+                    "Unable to locate the Ainux repository root inside the downloaded tarball.",
+                    file=sys.stderr,
+                )
+                return 1
+
+        source_package = checkout_dir / "ainux_ai"
+        if not source_package.is_dir():
+            print(
+                f"The downloaded repository does not contain an 'ainux_ai' directory at {source_package}",
+                file=sys.stderr,
+            )
+            return 1
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        stage_dir = install_root / f".ainux_ai.new.{timestamp}"
+        backup_dir = install_root / f"ainux_ai.backup.{timestamp}"
+
+        print(f"[info] Staging updated package at {stage_dir}")
+        try:
+            shutil.copytree(source_package, stage_dir)
+        except OSError as exc:
+            print(f"Failed to stage new package contents: {exc}", file=sys.stderr)
+            return 1
+
+        try:
+            if target_package.exists():
+                print(f"[info] Creating backup of current package at {backup_dir}")
+                target_package.rename(backup_dir)
+
+            print(f"[info] Activating updated package at {target_package}")
+            stage_dir.rename(target_package)
+        except OSError as exc:
+            print(f"Failed to activate updated package: {exc}", file=sys.stderr)
+            if stage_dir.exists():
+                shutil.rmtree(stage_dir, ignore_errors=True)
+            if backup_dir.exists() and not target_package.exists():
+                backup_dir.rename(target_package)
+            return 1
+
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir, ignore_errors=True)
+
+        print("Ainux AI tooling is now up to date.")
+        return 0
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def handle_assist(args: argparse.Namespace) -> int:
+    request = args.request
+    if not request:
+        if sys.stdin.isatty():
+            request = input("무엇을 도와드릴까요? ")
+        else:
+            request = sys.stdin.read()
+    if not request or not request.strip():
+        raise ConfigError("No request supplied for assist command")
+    request = request.strip()
+
+    fabric: Optional[ContextFabric] = None
+    fabric_path: Optional[Path] = None
+    if not args.no_context:
+        fabric, fabric_path = _load_context_fabric(args.fabric_path)
+
+    client = None
+    provider_warning: Optional[str] = None
+    if not args.offline:
+        try:
+            provider = resolve_provider(args.provider)
+        except ConfigError as exc:
+            provider_warning = str(exc)
+        else:
+            client = ChatClient(provider, timeout=args.timeout)
+
+    orchestrator = AinuxOrchestrator.with_client(client, fabric=fabric)
+
+    try:
+        result = orchestrator.orchestrate(request, context={}, execute=not args.dry_run)
+    except OrchestrationError as exc:
+        print(f"Orchestration failed: {exc}", file=sys.stderr)
+        return 1
+
+    _print_assist_summary(result, executed=not args.dry_run)
+
+    if result.safety.blocked_steps:
+        print("[info] 일부 단계는 안전 검토에서 차단되었습니다.", file=sys.stderr)
+
+    if provider_warning:
+        print(f"[info] {provider_warning}. 휴리스틱 모드로 진행했습니다.", file=sys.stderr)
+
+    if fabric is not None and not args.no_context:
+        saved_path = fabric.save(fabric_path)
+        print(f"[info] Context fabric updated: {saved_path}", file=sys.stderr)
+
     return 0
 
 
@@ -1982,6 +2271,68 @@ def _append_history(
     with history_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry))
         handle.write("\n")
+
+
+def _print_assist_summary(result, *, executed: bool) -> None:
+    intent = result.intent
+    try:
+        confidence = f"{float(intent.confidence):.2f}"
+    except (TypeError, ValueError):
+        confidence = "?"
+
+    print("=== Ainux Assist ===")
+    print(f"요청: {intent.raw_input}")
+    print(f"이해한 작업: {intent.action} (신뢰도 {confidence})")
+    if intent.reasoning:
+        print(f"사유: {intent.reasoning}")
+    if intent.parameters:
+        print("추론된 매개변수:", json.dumps(intent.parameters, ensure_ascii=False))
+
+    if result.plan.notes:
+        print(f"계획 메모: {result.plan.notes}")
+
+    if result.plan.steps:
+        print("\n계획:")
+        for index, step in enumerate(result.plan.steps, 1):
+            description = (step.description or "").strip() or step.action
+            print(f"  {index}. {description}")
+            if step.action and step.action != description:
+                print(f"     ↳ action: {step.action}")
+            if step.parameters:
+                print("     ↳ parameters:", json.dumps(step.parameters, ensure_ascii=False))
+    else:
+        print("\n계획: (없음)")
+
+    if result.safety.warnings:
+        print("\n안전 경고:")
+        for warning in result.safety.warnings:
+            print(f"  - {warning}")
+    if result.safety.rationale:
+        print(f"안전 검토 근거: {result.safety.rationale}")
+    if result.safety.blocked_steps:
+        print("\n차단된 단계:")
+        for step in result.safety.blocked_steps:
+            description = step.description or step.action
+            print(f"  - {step.id}: {description}")
+
+    if executed:
+        print("\n실행 결과:")
+        if result.execution:
+            for entry in result.execution:
+                line = f"  - {entry.step_id}: {entry.status}"
+                if entry.output:
+                    line += f" → {entry.output}"
+                if entry.error:
+                    line += f" (오류: {entry.error})"
+                print(line)
+        else:
+            print("  - 실행할 단계가 없었습니다.")
+    else:
+        print("\n실행은 건너뛰었습니다. (--dry-run)")
+
+    message = next((review.message for review in reversed(result.reviews) if review.message), None)
+    if message:
+        print(f"\n추가 안내: {message}")
 
 
 def _orchestration_result_to_dict(result) -> Dict[str, object]:

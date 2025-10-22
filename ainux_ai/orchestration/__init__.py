@@ -5,6 +5,7 @@ from .models import (
     ExecutionResult,
     Intent,
     OrchestrationResult,
+    PlanReview,
     PlanStep,
     SafetyReport,
 )
@@ -15,6 +16,7 @@ __all__ = [
     "ExecutionResult",
     "Intent",
     "OrchestrationResult",
+    "PlanReview",
     "PlanStep",
     "SafetyReport",
     "AinuxOrchestrator",
