@@ -96,6 +96,19 @@ class IntentParser:
             "bash",
             "zsh",
         ]
+        application_keywords = [
+            ("text editor", "text_editor"),
+            ("editor", "text_editor"),
+            ("gedit", "gedit"),
+            ("kate", "text_editor"),
+            ("mousepad", "text_editor"),
+            ("leafpad", "text_editor"),
+            ("code", "code"),
+            ("visual studio", "code"),
+            ("firefox", "firefox"),
+            ("chromium", "browser"),
+            ("browser", "browser"),
+        ]
         resource_keywords = ["cpu", "메모리", "memory", "ram", "자원", "resource", "load", "부하"]
         process_keywords = ["프로세스", "process", "작업", "kill", "종료", "pid", "백그라운드", "우선순위", "priority"]
         ui_keywords = ["도와", "ui", "interface", "창", "앱", "app", "실행", "어떻게", "사용법"]
@@ -144,6 +157,32 @@ class IntentParser:
                 if keyword in lowered:
                     action = "system.execute_low_level"
                     parameters["language"] = language
+                    confidence = 0.65
+                    break
+
+        if action == "analysis.review_request":
+            execute_markers = ["execute", "excute", "run", "launch", "start", "실행", "켜줘"]
+            for marker in execute_markers:
+                if marker in lowered:
+                    for keyword, normalized in application_keywords:
+                        if keyword in lowered:
+                            action = "system.launch_application"
+                            parameters = {
+                                "target": normalized,
+                                "requested_operation": marker,
+                            }
+                            confidence = 0.7
+                            break
+                    if action == "analysis.review_request" and marker in lowered:
+                        parameters.setdefault("requested_operation", marker)
+                    if action != "analysis.review_request":
+                        break
+
+        if action == "analysis.review_request":
+            for keyword, normalized in application_keywords:
+                if keyword in lowered:
+                    action = "system.launch_application"
+                    parameters = {"target": normalized}
                     confidence = 0.65
                     break
 

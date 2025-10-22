@@ -442,11 +442,27 @@ class ApplicationLauncherCapability:
             ("xterm",),
         )
     )
+    application_commands: Dict[str, Iterable[Iterable[str]]] = field(
+        default_factory=lambda: {
+            "text_editor": (
+                ("gedit",),
+                ("xed",),
+                ("kate",),
+                ("mousepad",),
+                ("leafpad",),
+                ("code",),
+            ),
+            "gedit": (("gedit",),),
+            "code": (("code",), ("code", "--new-window")),
+            "browser": (("firefox",), ("chromium-browser",), ("google-chrome",)),
+            "firefox": (("firefox",),),
+        }
+    )
 
     def execute(self, step: PlanStep, context: Optional[Dict[str, object]] = None) -> ExecutionResult:
         params = step.parameters or {}
         command = params.get("command")
-        target = str(params.get("target") or "").lower()
+        target = str(params.get("target") or "").lower().strip()
 
         candidates: List[List[str]] = []
 
@@ -463,6 +479,13 @@ class ApplicationLauncherCapability:
                 )
         elif target in {"terminal", "shell", "console"}:
             candidates = [list(cmd) for cmd in self.terminal_commands]
+        elif target:
+            normalized = target.replace(" ", "_")
+            if normalized in self.application_commands:
+                commands = self.application_commands[normalized]
+                candidates = [list(cmd) for cmd in commands]
+            else:
+                candidates = [[part for part in target.split() if part]] or []
         else:
             return ExecutionResult(
                 step_id=step.id,
