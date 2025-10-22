@@ -18,6 +18,7 @@ try:  # pragma: no cover - optional runtime dependency
 except Exception:  # pragma: no cover - defensive fallback
     pyautogui = None
 
+from .low_level import prepare_low_level_parameters
 from .models import ExecutionResult, PlanStep
 
 
@@ -554,7 +555,7 @@ class ProcessManagementCapability:
                 step_id=step.id,
                 status=status,
                 output=completed.stdout.strip() or None,
-                error=completed.stderr.strip() or None,
+                error=(completed.stderr.strip() or (f"Process exited with status {completed.returncode}" if status == "error" else None)),
             )
 
         return ExecutionResult(step_id=step.id, status="blocked", error=f"Unsupported process action '{action}'")
@@ -639,33 +640,51 @@ class LowLevelCodeCapability:
     timeout: int = 10
 
     def execute(self, step: PlanStep, context: Optional[Dict[str, object]] = None) -> ExecutionResult:
-        params = step.parameters or {}
+        raw_params = step.parameters or {}
+        if isinstance(raw_params, dict):
+            base_params = dict(raw_params)
+        else:
+            base_params = {}
+        normalized = prepare_low_level_parameters(base_params)
+        if isinstance(step.parameters, dict):
+            step.parameters.clear()
+            step.parameters.update(normalized)
+        params = dict(normalized)
+
         source = params.get("source") or params.get("code")
-        if not source:
-            return ExecutionResult(step_id=step.id, status="blocked", error="Missing source code")
+        if not source or not str(source).strip():
+            hint = params.get("original_request") or step.description or step.action
+            return ExecutionResult(
+                step_id=step.id,
+                status="blocked",
+                error=f"Missing source code for {hint}",
+            )
 
         language = str(params.get("language") or "c").lower()
         args = params.get("args") or []
         if isinstance(args, str):
             args = shlex.split(args)
-        elif not isinstance(args, (list, tuple)):
+        elif isinstance(args, (list, tuple)):
+            args = [str(item) for item in args]
+        else:
             return ExecutionResult(step_id=step.id, status="error", error="args must be a list or string")
 
+        source_text = str(source)
         with tempfile.TemporaryDirectory(prefix="ainux-lowlevel-") as tmpdir:
             workdir = Path(tmpdir)
             binary_path = workdir / "program"
 
             if language in {"c", "c11", "c99"}:
                 source_path = workdir / "program.c"
-                source_path.write_text(str(source), encoding="utf-8")
+                source_path.write_text(source_text, encoding="utf-8")
                 compile_cmd = ["gcc", "-std=c11", "-O2", str(source_path), "-o", str(binary_path)]
             elif language in {"asm", "assembly"}:
                 source_path = workdir / "program.s"
-                source_path.write_text(str(source), encoding="utf-8")
-                compile_cmd = ["gcc", "-x", "assembler", str(source_path), "-o", str(binary_path)]
+                source_path.write_text(source_text, encoding="utf-8")
+                compile_cmd = ["gcc", "-nostdlib", "-no-pie", "-Wl,-e,_start", "-x", "assembler", str(source_path), "-o", str(binary_path)]
             elif language in {"machine", "binary"}:
                 try:
-                    binary_path.write_bytes(bytes.fromhex(str(source)))
+                    binary_path.write_bytes(bytes.fromhex(source_text))
                 except ValueError:
                     return ExecutionResult(step_id=step.id, status="error", error="Machine code must be a hex string")
                 binary_path.chmod(0o700)
@@ -713,5 +732,5 @@ class LowLevelCodeCapability:
                 step_id=step.id,
                 status=status,
                 output=completed.stdout.strip() or None,
-                error=completed.stderr.strip() or None,
+                error=(completed.stderr.strip() or (f"Process exited with status {completed.returncode}" if status == "error" else None)),
             )
