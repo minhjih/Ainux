@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Set, TYPE_CHECKING
+from typing import Dict, List, Optional, Protocol, Set, TYPE_CHECKING
 
 from ..client import ChatClient
 from .execution import (
@@ -27,6 +27,22 @@ if TYPE_CHECKING:
 
 class OrchestrationError(RuntimeError):
     """Raised when orchestration cannot proceed."""
+
+
+class OrchestrationObserver(Protocol):
+    """Observer interface for tracking orchestration progress."""
+
+    def on_stage(self, stage: str, detail: Optional[str] = None) -> None:
+        """Called whenever a high-level stage begins."""
+
+    def on_step_start(self, step: PlanStep, index: int, total: int) -> None:
+        """Called right before a plan step is executed."""
+
+    def on_step_result(self, result: ExecutionResult) -> None:
+        """Called after a plan step produces a result."""
+
+    def on_review(self, review: PlanReview) -> None:
+        """Called after each planner review round."""
 
 
 @dataclass
@@ -86,8 +102,12 @@ class AinuxOrchestrator:
         *,
         context: Optional[Dict[str, object]] = None,
         execute: bool = True,
+        observer: Optional[OrchestrationObserver] = None,
     ) -> OrchestrationResult:
         """Run the full orchestration pipeline for *request*."""
+
+        if observer:
+            observer.on_stage("start", request)
 
         combined_context = dict(context or {})
         if self.fabric:
@@ -101,11 +121,18 @@ class AinuxOrchestrator:
             combined_context.setdefault("fabric", snapshot.to_context_payload())
 
         intent = self.intent_parser.parse(request, combined_context)
+        if observer:
+            observer.on_stage("intent", intent.action or intent.raw_input)
         if intent.context_snapshot is None:
             intent.context_snapshot = combined_context
 
         plan = self.planner.create_plan(intent, combined_context)
+        if observer:
+            observer.on_stage("plan", str(len(plan.steps)))
         safety = self.safety_checker.review(plan, combined_context)
+        if observer:
+            detail = f"approved={len(safety.approved_steps)} blocked={len(safety.blocked_steps)}"
+            observer.on_stage("safety", detail)
         if not safety.approved_steps and plan.steps:
             raise OrchestrationError("All plan steps were blocked by safety checks")
 
@@ -117,15 +144,26 @@ class AinuxOrchestrator:
                 step for step in plan.steps if step.id in approved_ids
             ]
             completed_ids: Set[str] = set()
+            step_counter = 0
+
+            if observer:
+                observer.on_stage("execution", str(len(pending_steps)))
 
             while pending_steps:
                 step = pending_steps.pop(0)
                 if step.id in completed_ids:
                     continue
 
+                total_steps = len([s for s in plan.steps if s.id in approved_ids])
+                step_counter += 1
+                if observer:
+                    observer.on_step_start(step, step_counter, total_steps)
+
                 step_results = self.executor.execute_plan([step], combined_context)
                 execution_results.extend(step_results)
                 for result in step_results:
+                    if observer:
+                        observer.on_step_result(result)
                     if result.status not in {"blocked", "error"}:
                         completed_ids.add(result.step_id)
 
@@ -136,10 +174,20 @@ class AinuxOrchestrator:
                     combined_context,
                 )
                 reviews.append(review)
+                if observer:
+                    observer.on_review(review)
 
                 if review.plan is not plan:
+                    if observer:
+                        observer.on_stage("replan", str(len(review.plan.steps)))
                     plan = review.plan
                     safety = self.safety_checker.review(plan, combined_context)
+                    if observer:
+                        detail = (
+                            f"approved={len(safety.approved_steps)} "
+                            f"blocked={len(safety.blocked_steps)}"
+                        )
+                        observer.on_stage("safety", detail)
                     if not safety.approved_steps and plan.steps:
                         raise OrchestrationError(
                             "All plan steps were blocked after planner review"
@@ -155,6 +203,9 @@ class AinuxOrchestrator:
                     if step.id not in completed_ids and step.id in approved_ids
                 ]
         else:
+            reason = "dry-run" if not execute else "no-approved-steps"
+            if observer:
+                observer.on_stage("execution_skipped", reason)
             if not execute:
                 reviews.append(
                     self.planner.review_execution(intent, plan, execution_results, combined_context)
@@ -182,6 +233,9 @@ class AinuxOrchestrator:
                 },
             )
 
+        if observer:
+            observer.on_stage("complete")
+
         return OrchestrationResult(
             intent=intent,
             plan=plan,
@@ -198,5 +252,6 @@ class AinuxOrchestrator:
 
 __all__ = [
     "AinuxOrchestrator",
+    "OrchestrationObserver",
     "OrchestrationError",
 ]

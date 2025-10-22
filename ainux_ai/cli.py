@@ -56,7 +56,8 @@ from .infrastructure import (
     default_profiles_path,
     HealthReport,
 )
-from .orchestration import AinuxOrchestrator, OrchestrationError
+from .orchestration import AinuxOrchestrator, OrchestrationError, OrchestrationObserver
+from .orchestration.models import ExecutionResult, PlanReview, PlanStep
 
 
 DEFAULT_UPSTREAM_REPO = "https://github.com/ainux-os/Ainux.git"
@@ -1323,9 +1324,15 @@ def handle_assist(args: argparse.Namespace) -> int:
             client = ChatClient(provider, timeout=args.timeout)
 
     orchestrator = AinuxOrchestrator.with_client(client, fabric=fabric)
+    observer: Optional[OrchestrationObserver] = ConsoleAssistObserver()
 
     try:
-        result = orchestrator.orchestrate(request, context={}, execute=not args.dry_run)
+        result = orchestrator.orchestrate(
+            request,
+            context={},
+            execute=not args.dry_run,
+            observer=observer,
+        )
     except OrchestrationError as exc:
         print(f"Orchestration failed: {exc}", file=sys.stderr)
         return 1
@@ -2271,6 +2278,81 @@ def _append_history(
     with history_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry))
         handle.write("\n")
+
+
+class ConsoleAssistObserver(OrchestrationObserver):
+    """Streams orchestration progress updates to the console."""
+
+    STAGE_MESSAGES = {
+        "start": "요청을 접수했습니다.",
+        "intent": "자연어 요청을 해석하는 중입니다.",
+        "plan": "실행 계획을 작성하는 중입니다.",
+        "safety": "안전 검토를 수행하는 중입니다.",
+        "execution": "계획을 실행하는 중입니다.",
+        "execution_skipped": "실행 단계를 건너뜁니다.",
+        "replan": "계획을 다시 조정합니다.",
+        "complete": "모든 처리를 완료했습니다.",
+    }
+
+    EXECUTION_SKIP_REASONS = {
+        "dry-run": "드라이런 모드",
+        "no-approved-steps": "실행할 단계가 없습니다.",
+    }
+
+    def __init__(self, stream=None) -> None:
+        self.stream = stream or sys.stderr
+        self._started = time.time()
+
+    def _log(self, message: str) -> None:
+        elapsed = time.time() - self._started
+        print(f"[{elapsed:5.1f}s] {message}", file=self.stream)
+
+    def on_stage(self, stage: str, detail: Optional[str] = None) -> None:
+        base = self.STAGE_MESSAGES.get(stage, stage)
+        if stage == "plan" and detail is not None:
+            try:
+                count = int(detail)
+            except (TypeError, ValueError):
+                count = None
+            if count is not None:
+                base = f"{base} (총 {count}단계)"
+        elif stage == "safety" and detail:
+            base = f"{base} [{detail}]"
+        elif stage == "execution" and detail:
+            base = f"{base} (승인된 {detail}단계)"
+        elif stage == "execution_skipped" and detail:
+            reason = self.EXECUTION_SKIP_REASONS.get(detail, detail)
+            base = f"{base} ({reason})"
+        elif detail and stage not in {"plan", "safety", "execution", "execution_skipped"}:
+            base = f"{base} ({detail})"
+        self._log(base)
+
+    def on_step_start(self, step: PlanStep, index: int, total: int) -> None:
+        description = (step.description or step.action or "").strip() or step.action
+        self._log(f"단계 {index}/{total} 실행 준비: {description}")
+
+    def on_step_result(self, result: ExecutionResult) -> None:
+        summary = f"단계 {result.step_id} → {result.status}"
+        if result.output:
+            summary += f" | {self._truncate(result.output)}"
+        if result.error:
+            summary += f" (오류: {self._truncate(result.error)})"
+        self._log(summary)
+
+    def on_review(self, review: PlanReview) -> None:
+        if review.message:
+            self._log(f"검토 메모: {review.message}")
+        if review.complete:
+            self._log("플래너가 작업 완료로 표시했습니다.")
+        elif review.next_steps:
+            self._log(f"추가 단계 {len(review.next_steps)}개를 준비합니다.")
+
+    @staticmethod
+    def _truncate(text: str, limit: int = 120) -> str:
+        cleaned = " ".join(text.strip().split())
+        if len(cleaned) <= limit:
+            return cleaned
+        return cleaned[: limit - 1] + "…"
 
 
 def _print_assist_summary(result, *, executed: bool) -> None:
