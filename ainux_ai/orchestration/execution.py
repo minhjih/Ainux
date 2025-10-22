@@ -8,6 +8,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, MutableMapping, Optional, Protocol
 
+try:  # pragma: no cover - optional runtime dependency
+    import pyautogui  # type: ignore
+except Exception:  # pragma: no cover - defensive fallback
+    pyautogui = None
+
 from .models import ExecutionResult, PlanStep
 
 
@@ -172,3 +177,47 @@ class BlueprintCapability:
             status="success",
             output=str(target),
         )
+
+
+@dataclass
+class PointerControlCapability:
+    """Capability that executes pointer automation actions."""
+
+    name: str = "ui.control_pointer"
+
+    def execute(self, step: PlanStep, context: Optional[Dict[str, object]] = None) -> ExecutionResult:
+        params = step.parameters or {}
+        operation = str(params.get("operation") or "move")
+
+        if pyautogui is None:
+            return ExecutionResult(
+                step_id=step.id,
+                status="blocked",
+                error="Pointer control requires the 'pyautogui' package",
+            )
+
+        try:
+            if operation == "move":
+                dx = int(params.get("dx") or 0)
+                dy = int(params.get("dy") or 0)
+                duration = float(params.get("duration") or 0.0)
+                pyautogui.FAILSAFE = False
+                pyautogui.moveRel(dx, dy, duration=max(duration, 0.0))
+                output = f"moved pointer by ({dx}, {dy})"
+            elif operation == "click":
+                button = str(params.get("button") or "left")
+                clicks = int(params.get("clicks") or 1)
+                interval = float(params.get("interval") or 0.0)
+                pyautogui.FAILSAFE = False
+                pyautogui.click(button=button, clicks=max(clicks, 1), interval=max(interval, 0.0))
+                output = f"clicked {button} x{clicks}"
+            else:
+                return ExecutionResult(
+                    step_id=step.id,
+                    status="error",
+                    error=f"Unsupported pointer operation '{operation}'",
+                )
+        except Exception as exc:  # pragma: no cover - runtime guard
+            return ExecutionResult(step_id=step.id, status="error", error=str(exc))
+
+        return ExecutionResult(step_id=step.id, status="success", output=output)
