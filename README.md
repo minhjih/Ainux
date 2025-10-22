@@ -62,19 +62,26 @@ Ainux ISO/툴킷에는 "Ainux AI"라 부르는 자연어 기반 자동화 스택
 
 ### 설치 이후 Ainux AI 업데이트
 
-ISO로 설치된 시스템에서도 Python 패키지 형태의 `ainux-ai`를 최신 상태로 유지할 수 있습니다. 새 릴리스가 공개되었을 때는 아래 명령 한 줄이면 됩니다.
+ISO로 설치된 시스템에서도 내장된 `ainux_ai` 모듈을 최신 GitHub 버전으로 갱신할 수 있습니다. 새 릴리스가 공개되었을 때는 아래 명령 한 줄이면 됩니다.
 
 ```bash
 sudo ainux-client self-update
 ```
 
-명령은 내부적으로 현재 Python 실행 환경을 사용해 `pip install --upgrade ainux-ai`를 호출합니다. 실제로 적용하기 전에 어떤 명령이 실행될지 확인하고 싶다면 `--dry-run`을 조합하고, 사내 패키지 미러를 사용해야 한다면 `--index-url`이나 `--extra-index-url` 플래그를 추가하세요.
+명령은 우선 `git`이 설치되어 있는지 확인한 뒤, 기본 원격 저장소(`https://github.com/ainux-os/Ainux.git`)에서 지정한 브랜치(기본값은 `main`)를 얕은 복제로 내려받아 현재 설치된 `/usr/local/lib/ainux/ainux_ai` 디렉터리를 원자적으로 교체합니다. `git`이 없거나 방화벽으로 차단된 환경에서는 GitHub codeload tarball을 자동으로 내려받아 동일한 절차를 수행합니다.
 
 ```bash
-ainux-client self-update --dry-run --index-url https://mirror.example.com/simple
+ainux-client self-update --dry-run
 ```
 
-특정 버전을 강제로 설치하고 싶을 때는 `--version 1.2.3`처럼 버전 번호를 지정하면 됩니다.
+`--repo-url`과 `--ref` 플래그를 사용하면 사내 포크나 특정 태그로 업데이트 대상을 손쉽게 바꿀 수 있습니다. Git을 쓸 수 없는 네트워크라면 `--tarball-url`에 미리 준비한 `.tar.gz` 아카이브 주소를 직접 넘겨주면 됩니다.
+
+```bash
+sudo ainux-client self-update --repo-url https://github.com/my-org/Ainux.git --ref release-2024.05
+sudo ainux-client self-update --tarball-url https://intranet.example.com/Ainux-main.tar.gz
+```
+
+기본 설치 위치가 `/usr/local/lib/ainux`가 아니라면 `--install-root`로 경로를 지정하세요. 모든 옵션은 `--dry-run`과 조합해 실제로 파일을 덮어쓰기 전에 계획을 검토할 수 있습니다.
 
 ## Quick Start
 

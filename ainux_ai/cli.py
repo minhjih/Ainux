@@ -8,12 +8,16 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
 import time
 from dataclasses import asdict
 from datetime import datetime, timezone
 from getpass import getpass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from urllib.error import URLError
+from urllib.request import urlopen
 
 from . import __version__
 from .context import ContextFabric, default_fabric_path, load_fabric
@@ -53,6 +57,10 @@ from .infrastructure import (
     HealthReport,
 )
 from .orchestration import AinuxOrchestrator, OrchestrationError
+
+
+DEFAULT_UPSTREAM_REPO = "https://github.com/ainux-os/Ainux.git"
+DEFAULT_UPSTREAM_REF = "main"
 from .ui import AinuxUIServer, UIServerConfig
 
 
@@ -222,42 +230,42 @@ def build_parser() -> argparse.ArgumentParser:
 
     self_update_parser = subcommands.add_parser(
         "self-update",
-        help="Update the installed ainux-ai tools to the latest published release.",
+        help="Update the installed ainux-ai tools from the upstream Git repository.",
     )
     self_update_parser.add_argument(
-        "--package",
-        default="ainux-ai",
-        help="Python package name to update (default: ainux-ai).",
+        "--repo-url",
+        default=DEFAULT_UPSTREAM_REPO,
+        help=(
+            "Git repository URL to pull updates from (default:"
+            f" {DEFAULT_UPSTREAM_REPO})."
+        ),
     )
     self_update_parser.add_argument(
-        "--version",
-        help="Install a specific version instead of the latest available.",
+        "--ref",
+        default=DEFAULT_UPSTREAM_REF,
+        help=(
+            "Branch, tag, or commit to check out from the upstream repository"
+            f" (default: {DEFAULT_UPSTREAM_REF})."
+        ),
     )
     self_update_parser.add_argument(
-        "--index-url",
-        help="Override the Python package index URL used for the update.",
+        "--tarball-url",
+        help=(
+            "Fallback tarball URL to download when git is unavailable."
+            " Defaults to the GitHub codeload URL derived from --repo-url."
+        ),
     )
     self_update_parser.add_argument(
-        "--extra-index-url",
-        action="append",
-        default=[],
-        metavar="URL",
-        help="Additional package indexes to consult during the update.",
-    )
-    self_update_parser.add_argument(
-        "--pre",
-        action="store_true",
-        help="Allow installation of pre-release versions when available.",
-    )
-    self_update_parser.add_argument(
-        "--no-cache",
-        action="store_true",
-        help="Disable the pip download cache during the update.",
+        "--install-root",
+        help=(
+            "Root directory that contains the ainux_ai package to replace."
+            " Defaults to the directory two levels above this CLI module."
+        ),
     )
     self_update_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Show the pip command without executing it.",
+        help="Preview the update steps without downloading or modifying files.",
     )
     self_update_parser.set_defaults(func=handle_self_update)
 
@@ -1139,46 +1147,153 @@ def handle_set_key(args: argparse.Namespace) -> int:
     return 0
 
 
+def derive_tarball_url(repo_url: str, ref: str) -> Optional[str]:
+    if not repo_url:
+        return None
+    normalized = repo_url.rstrip("/")
+    if normalized.endswith(".git"):
+        normalized = normalized[:-4]
+    github_prefix = "https://github.com/"
+    if normalized.startswith(github_prefix):
+        repo_path = normalized[len(github_prefix) :]
+        return f"https://codeload.github.com/{repo_path}/tar.gz/{ref}" if ref else f"https://codeload.github.com/{repo_path}/tar.gz/main"
+    return None
+
+
+def find_repo_root(extracted_dir: Path) -> Optional[Path]:
+    if not extracted_dir.exists():
+        return None
+    if (extracted_dir / "ainux_ai").is_dir():
+        return extracted_dir
+    for child in extracted_dir.iterdir():
+        if child.is_dir() and (child / "ainux_ai").is_dir():
+            return child
+    return None
+
+
 def handle_self_update(args: argparse.Namespace) -> int:
-    python_executable = sys.executable or shutil.which("python3") or shutil.which("python")
-    if not python_executable:
-        print("Unable to locate a Python interpreter for pip updates.", file=sys.stderr)
+    repo_url = args.repo_url or DEFAULT_UPSTREAM_REPO
+    ref = args.ref or DEFAULT_UPSTREAM_REF
+    install_root = Path(args.install_root).expanduser() if args.install_root else Path(__file__).resolve().parent.parent
+
+    if not install_root.exists():
+        print(f"Install root {install_root} does not exist.", file=sys.stderr)
         return 1
 
-    command: List[str] = [python_executable, "-m", "pip", "install", "--upgrade"]
-    if args.pre:
-        command.append("--pre")
-    if args.no_cache:
-        command.append("--no-cache-dir")
-    if args.index_url:
-        command.extend(["--index-url", args.index_url])
-    for extra_index in args.extra_index_url:
-        command.extend(["--extra-index-url", extra_index])
+    target_package = install_root / "ainux_ai"
+    if not target_package.exists():
+        print(
+            f"No 'ainux_ai' package found under {install_root}. Use --install-root to point to the correct directory.",
+            file=sys.stderr,
+        )
+        return 1
 
-    package_spec = args.package
-    if args.version:
-        package_spec = f"{package_spec}=={args.version}"
-    command.append(package_spec)
-
-    preview = shlex.join(command)
-    print(f"[info] Preparing to update Ainux tooling via: {preview}")
+    print(f"[info] Updating Ainux tooling in {install_root} from {repo_url}@{ref}")
 
     if args.dry_run:
-        print("[dry-run] Update command not executed.")
+        print("[dry-run] Skipping download and install because --dry-run was supplied.")
         return 0
 
+    temp_dir = Path(tempfile.mkdtemp(prefix="ainux-self-update-"))
+    checkout_dir: Optional[Path] = None
+
     try:
-        result = subprocess.run(command, check=False)
-    except FileNotFoundError as exc:
-        print(f"Failed to execute pip: {exc}", file=sys.stderr)
-        return 1
+        git_binary = shutil.which("git")
+        if git_binary:
+            checkout_dir = temp_dir / "checkout"
+            command = [git_binary, "clone", "--depth", "1"]
+            if ref:
+                command.extend(["--branch", ref])
+            command.extend([repo_url, str(checkout_dir)])
+            print(f"[info] Cloning repository via: {shlex.join(command)}")
+            result = subprocess.run(command, check=False)
+            if result.returncode != 0:
+                print(
+                    f"[warn] git clone exited with status {result.returncode}; falling back to tarball download.",
+                    file=sys.stderr,
+                )
+                checkout_dir = None
+        else:
+            print("[info] git binary not found; attempting tarball download instead.")
 
-    if result.returncode != 0:
-        print(f"pip exited with status {result.returncode}", file=sys.stderr)
-        return result.returncode
+        if checkout_dir is None:
+            tarball_url = args.tarball_url
+            if not tarball_url:
+                tarball_url = derive_tarball_url(repo_url, ref)
+            if not tarball_url:
+                print(
+                    "Unable to derive a tarball URL. Provide one explicitly via --tarball-url.",
+                    file=sys.stderr,
+                )
+                return 1
 
-    print("Ainux AI tooling is now up to date.")
-    return 0
+            archive_path = temp_dir / "source.tar.gz"
+            print(f"[info] Downloading tarball from {tarball_url}")
+            try:
+                with urlopen(tarball_url) as response, archive_path.open("wb") as archive_file:
+                    shutil.copyfileobj(response, archive_file)
+            except URLError as exc:
+                print(f"Failed to download update tarball: {exc}", file=sys.stderr)
+                return 1
+
+            extracted_dir = temp_dir / "extracted"
+            extracted_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                with tarfile.open(archive_path, "r:gz") as archive:
+                    archive.extractall(path=extracted_dir)
+            except (tarfile.TarError, OSError) as exc:
+                print(f"Failed to extract update tarball: {exc}", file=sys.stderr)
+                return 1
+
+            checkout_dir = find_repo_root(extracted_dir)
+            if checkout_dir is None:
+                print(
+                    "Unable to locate the Ainux repository root inside the downloaded tarball.",
+                    file=sys.stderr,
+                )
+                return 1
+
+        source_package = checkout_dir / "ainux_ai"
+        if not source_package.is_dir():
+            print(
+                f"The downloaded repository does not contain an 'ainux_ai' directory at {source_package}",
+                file=sys.stderr,
+            )
+            return 1
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        stage_dir = install_root / f".ainux_ai.new.{timestamp}"
+        backup_dir = install_root / f"ainux_ai.backup.{timestamp}"
+
+        print(f"[info] Staging updated package at {stage_dir}")
+        try:
+            shutil.copytree(source_package, stage_dir)
+        except OSError as exc:
+            print(f"Failed to stage new package contents: {exc}", file=sys.stderr)
+            return 1
+
+        try:
+            if target_package.exists():
+                print(f"[info] Creating backup of current package at {backup_dir}")
+                target_package.rename(backup_dir)
+
+            print(f"[info] Activating updated package at {target_package}")
+            stage_dir.rename(target_package)
+        except OSError as exc:
+            print(f"Failed to activate updated package: {exc}", file=sys.stderr)
+            if stage_dir.exists():
+                shutil.rmtree(stage_dir, ignore_errors=True)
+            if backup_dir.exists() and not target_package.exists():
+                backup_dir.rename(target_package)
+            return 1
+
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir, ignore_errors=True)
+
+        print("Ainux AI tooling is now up to date.")
+        return 0
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def handle_assist(args: argparse.Namespace) -> int:
