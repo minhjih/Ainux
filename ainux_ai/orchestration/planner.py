@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import re
+import shutil
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -136,6 +139,7 @@ class Planner:
                     depends_on=["list_processes"],
                 )
             )
+        elif action == "ui.control_pointer":
             steps.append(
                 PlanStep(
                     id="apply_process_change",
@@ -163,6 +167,7 @@ class Planner:
                     depends_on=["gather_context"],
                 )
             )
+        elif action == "system.launch_application":
             steps.append(
                 PlanStep(
                     id="queue_actions",
