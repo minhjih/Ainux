@@ -7,7 +7,7 @@ import os
 import re
 import shutil
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from ..client import ChatClient, ChatClientError
 from .low_level import prepare_low_level_parameters
@@ -146,7 +146,6 @@ class Planner:
                     depends_on=["list_processes"],
                 )
             )
-        elif action == "ui.control_pointer":
             steps.append(
                 PlanStep(
                     id="apply_process_change",
@@ -199,7 +198,6 @@ class Planner:
                     },
                 )
             )
-        elif action == "system.launch_application":
             steps.append(
                 PlanStep(
                     id="capture_pointer_state",
@@ -209,6 +207,7 @@ class Planner:
                     depends_on=["ensure_pointer_dependencies"],
                 )
             )
+        elif action == "system.launch_application":
             steps.append(
                 PlanStep(
                     id="apply_pointer_action",
@@ -426,12 +425,204 @@ class Planner:
             for result in history
             if result.status not in {"blocked", "error"}
         }
-        next_steps = [step for step in plan.steps if step.id not in completed_ids]
         message: Optional[str] = None
+        updated_plan = plan
+
+        failure_counts: Dict[str, int] = {}
+        skipped_steps: Set[str] = set()
+        complete_override = False
+
         if history:
             last = history[-1]
             message = last.output or last.error
-        return PlanReview(plan=plan, next_steps=next_steps, complete=not next_steps, message=message)
+            dependency = self._extract_missing_dependency(last)
+            if dependency and not self._plan_contains_dependency(plan, dependency):
+                updated_plan = self._inject_dependency_step(plan, last.step_id, dependency)
+
+            for result in history:
+                if result.status in {"blocked", "error"}:
+                    failure_counts[result.step_id] = failure_counts.get(result.step_id, 0) + 1
+
+            if last.status in {"blocked", "error"}:
+                attempts = failure_counts.get(last.step_id, 0)
+                if attempts >= 3:
+                    skipped_steps.add(last.step_id)
+                    complete_override = True
+                    if message:
+                        message = f"{message} (stopped after {attempts} failures)"
+
+        next_steps = [
+            step
+            for step in updated_plan.steps
+            if step.id not in completed_ids and step.id not in skipped_steps
+        ]
+
+        return PlanReview(
+            plan=updated_plan,
+            next_steps=next_steps,
+            complete=complete_override or not next_steps,
+            message=message,
+        )
+
+    def _plan_contains_dependency(
+        self, plan: ActionPlan, dependency: Dict[str, str]
+    ) -> bool:
+        dep_type = dependency.get("type") or "python"
+        package = dependency.get("package")
+        module = dependency.get("module") or package
+
+        if dep_type == "system":
+            command = dependency.get("command") or package
+            if not command:
+                return False
+            for step in plan.steps:
+                if step.action != "system.run_command":
+                    continue
+                params = step.parameters or {}
+                step_command = params.get("command")
+                if isinstance(step_command, str):
+                    parts = step_command.split()
+                elif isinstance(step_command, (list, tuple)):
+                    parts = [str(part) for part in step_command]
+                else:
+                    continue
+                if not parts:
+                    continue
+                executable = parts[0]
+                if executable not in {"apt", "apt-get"}:
+                    continue
+                if "install" not in parts:
+                    continue
+                if command in parts:
+                    return True
+            return False
+
+        for step in plan.steps:
+            if step.action != "system.ensure_python_package":
+                continue
+            params = step.parameters or {}
+            step_package = str(params.get("package") or "").strip()
+            step_module = str(params.get("module") or "").strip()
+            if package and step_package == package:
+                return True
+            if module and step_module == module:
+                return True
+        return False
+
+    def _inject_dependency_step(
+        self, plan: ActionPlan, failing_step_id: str, dependency: Dict[str, str]
+    ) -> ActionPlan:
+        dep_type = dependency.get("type") or "python"
+        package = dependency.get("package") or dependency.get("module")
+        module = dependency.get("module") or package
+        command = dependency.get("command") or package
+        if not package and not command:
+            return plan
+
+        failing_step = next(
+            (step for step in plan.steps if step.id == failing_step_id),
+            None,
+        )
+
+        if dep_type == "system":
+            if not command:
+                return plan
+            ensure_id = f"install_{command.replace('.', '_').replace('-', '_')}"
+            ensure_description = (
+                f"Install system package '{command}' before retrying the step."
+            )
+            ensure_parameters = {
+                "command": ["apt", "install", command, "-y"],
+                "original_request": plan.intent.raw_input,
+            }
+            action = "system.run_command"
+            depends_on = list(failing_step.depends_on) if failing_step else []
+        else:
+            if not package:
+                return plan
+            ensure_id = f"ensure_{(module or package).replace('.', '_')}"
+            ensure_description = (
+                f"Install required Python package '{package}' before retrying the step."
+            )
+            ensure_parameters = {
+                "package": package,
+                "module": module,
+                "original_request": plan.intent.raw_input,
+            }
+            action = "system.ensure_python_package"
+            depends_on = list(failing_step.depends_on) if failing_step else []
+
+        ensure_step = PlanStep(
+            id=ensure_id,
+            action=action,
+            description=ensure_description,
+            parameters=ensure_parameters,
+            depends_on=depends_on,
+        )
+
+        updated_steps: List[PlanStep] = []
+        inserted = False
+        for step in plan.steps:
+            if step.id == failing_step_id and not inserted:
+                updated_steps.append(ensure_step)
+                inserted = True
+                if failing_step:
+                    new_depends = list(dict.fromkeys(step.depends_on + [ensure_id]))
+                    step = PlanStep(
+                        id=step.id,
+                        action=step.action,
+                        description=step.description,
+                        parameters=step.parameters,
+                        depends_on=new_depends,
+                    )
+            updated_steps.append(step)
+
+        if not inserted:
+            updated_steps.append(ensure_step)
+
+        return ActionPlan(intent=plan.intent, steps=updated_steps, notes=plan.notes)
+
+    def _extract_missing_dependency(
+        self, result: ExecutionResult
+    ) -> Optional[Dict[str, str]]:
+        message = result.error or result.output
+        if not message:
+            return None
+
+        text = message.strip()
+
+        python_patterns = [
+            r"requires the '([^']+)' package",
+            r"requires the \"([^\"]+)\" package",
+            r"No module named '([^']+)'",
+            r'No module named \"([^\"]+)\"',
+            r"ModuleNotFoundError: No module named '([^']+)'",
+            r'ModuleNotFoundError: No module named \"([^\"]+)\"',
+        ]
+
+        import re
+
+        for pattern in python_patterns:
+            match = re.search(pattern, text)
+            if match:
+                module = match.group(1)
+                package = module
+                return {"type": "python", "package": package, "module": module}
+
+        command_patterns = [
+            r"Command not found: ([^;\s]+)",
+            r"command not found: ([^;\s]+)",
+            r"Command '([^']+)' not found",
+            r"command '([^']+)' not found",
+        ]
+
+        for pattern in command_patterns:
+            match = re.search(pattern, text)
+            if match:
+                command = match.group(1)
+                return {"type": "system", "package": command, "command": command}
+
+        return None
 
     def _parse_steps(self, intent: Intent, steps_payload: List[dict]) -> List[PlanStep]:
         steps: List[PlanStep] = []
