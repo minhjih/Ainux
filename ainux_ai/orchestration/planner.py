@@ -90,7 +90,14 @@ class Planner:
         parameters = dict(intent.parameters)
         parameters.setdefault("original_request", intent.raw_input)
 
-        if action == "system.optimize_resources":
+        if self._looks_like_application_launch(parameters) and action in {
+            "ui.assist_user",
+            "analysis.review_request",
+        }:
+            steps.append(
+                self._build_launch_step(parameters, intent.raw_input)
+            )
+        elif action == "system.optimize_resources":
             steps.append(
                 PlanStep(
                     id="collect_metrics",
@@ -150,33 +157,35 @@ class Planner:
                 )
             )
         elif action == "ui.assist_user":
-            steps.append(
-                PlanStep(
-                    id="gather_context",
-                    action="ui.collect_user_context",
-                    description="Gather current desktop state and user goal for guidance.",
-                    parameters=parameters,
+            if self._looks_like_application_launch(parameters):
+                steps.append(self._build_launch_step(parameters, intent.raw_input))
+            else:
+                steps.append(
+                    PlanStep(
+                        id="gather_context",
+                        action="ui.collect_user_context",
+                        description="Gather current desktop state and user goal for guidance.",
+                        parameters=parameters,
+                    )
                 )
-            )
-            steps.append(
-                PlanStep(
-                    id="present_walkthrough",
-                    action="ui.present_walkthrough",
-                    description="Prepare a walkthrough describing how to accomplish the task in the UI.",
-                    parameters=parameters,
-                    depends_on=["gather_context"],
+                steps.append(
+                    PlanStep(
+                        id="present_walkthrough",
+                        action="ui.present_walkthrough",
+                        description="Prepare a walkthrough describing how to accomplish the task in the UI.",
+                        parameters=parameters,
+                        depends_on=["gather_context"],
+                    )
                 )
-            )
-        elif action == "system.launch_application":
-            steps.append(
-                PlanStep(
-                    id="queue_actions",
-                    action="ui.queue_actions",
-                    description="Queue any scripted clicks or commands the assistant can trigger on behalf of the user.",
-                    parameters=parameters,
-                    depends_on=["present_walkthrough"],
+                steps.append(
+                    PlanStep(
+                        id="queue_actions",
+                        action="ui.queue_actions",
+                        description="Queue any scripted clicks or commands the assistant can trigger on behalf of the user.",
+                        parameters=parameters,
+                        depends_on=["present_walkthrough"],
+                    )
                 )
-            )
         elif action == "ui.control_pointer":
             steps.append(
                 PlanStep(
@@ -186,6 +195,7 @@ class Planner:
                     parameters={"focus": "pointer"},
                 )
             )
+        elif action == "system.launch_application":
             steps.append(
                 PlanStep(
                     id="apply_pointer_action",
@@ -196,14 +206,7 @@ class Planner:
                 )
             )
         elif action == "system.launch_application":
-            steps.append(
-                PlanStep(
-                    id="launch_application",
-                    action="system.launch_application",
-                    description="Launch the requested desktop application using Ubuntu defaults.",
-                    parameters=parameters,
-                )
-            )
+            steps.append(self._build_launch_step(parameters, intent.raw_input))
         elif action == "system.schedule_task":
             steps.append(
                 PlanStep(
@@ -305,14 +308,17 @@ class Planner:
                 )
             )
         else:
-            steps.append(
-                PlanStep(
-                    id="analyze",
-                    action=action or "analysis.review_request",
-                    description="Analyze request and prepare manual runbook.",
-                    parameters=parameters,
+            if self._looks_like_application_launch(parameters):
+                steps.append(self._build_launch_step(parameters, intent.raw_input))
+            else:
+                steps.append(
+                    PlanStep(
+                        id="analyze",
+                        action=action or "analysis.review_request",
+                        description="Analyze request and prepare manual runbook.",
+                        parameters=parameters,
+                    )
                 )
-            )
         return ActionPlan(intent=intent, steps=steps, notes="Generated by heuristic planner")
 
     def review_execution(
@@ -432,3 +438,40 @@ class Planner:
                 )
             )
         return steps
+
+    def _looks_like_application_launch(self, parameters: Dict[str, object]) -> bool:
+        if not parameters:
+            return False
+
+        target = parameters.get("target") or parameters.get("application") or parameters.get("app")
+        if isinstance(target, str) and target.strip():
+            return True
+
+        command = parameters.get("command")
+        if isinstance(command, str) and command.strip():
+            return True
+        if isinstance(command, (list, tuple)):
+            if any(str(part).strip() for part in command):
+                return True
+
+        operation = parameters.get("requested_operation")
+        if isinstance(operation, str):
+            normalized = operation.strip().lower()
+            if normalized in {"execute", "excute", "run", "launch", "start", "실행", "켜줘"}:
+                return bool(target)
+
+        return False
+
+    def _build_launch_step(self, parameters: Dict[str, object], request: str) -> PlanStep:
+        launch_parameters = dict(parameters) if parameters else {}
+        launch_parameters.setdefault("original_request", request)
+        if "target" not in launch_parameters:
+            candidate = launch_parameters.get("application") or launch_parameters.get("app")
+            if isinstance(candidate, str) and candidate.strip():
+                launch_parameters["target"] = candidate.strip()
+        return PlanStep(
+            id="launch_application",
+            action="system.launch_application",
+            description="Launch the requested desktop application using Ubuntu defaults.",
+            parameters=launch_parameters,
+        )
