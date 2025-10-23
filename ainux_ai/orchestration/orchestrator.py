@@ -18,6 +18,7 @@ from .execution import (
     CommandInspectionCapability,
     DryRunCapability,
     LowLevelCodeCapability,
+    PythonPackageInstallerCapability,
     PointerControlCapability,
     ProcessEnumerationCapability,
     ProcessEvaluationCapability,
@@ -107,6 +108,7 @@ class AinuxOrchestrator:
         registry.register(BlueprintCapability())
         registry.register(ShellCommandCapability())
         registry.register(ApplicationLauncherCapability())
+        registry.register(PythonPackageInstallerCapability())
         registry.register(PointerControlCapability())
         registry.register(LowLevelCodeCapability())
         executor = ActionExecutor(registry=registry)

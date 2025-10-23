@@ -189,13 +189,26 @@ class Planner:
         elif action == "ui.control_pointer":
             steps.append(
                 PlanStep(
+                    id="ensure_pointer_dependencies",
+                    action="system.ensure_python_package",
+                    description="Ensure the pointer automation dependency is installed.",
+                    parameters={
+                        "package": "pyautogui",
+                        "module": "pyautogui",
+                        "original_request": intent.raw_input,
+                    },
+                )
+            )
+        elif action == "system.launch_application":
+            steps.append(
+                PlanStep(
                     id="capture_pointer_state",
                     action="ui.collect_user_context",
                     description="Capture current pointer position and focused surface for safety.",
                     parameters={"focus": "pointer"},
+                    depends_on=["ensure_pointer_dependencies"],
                 )
             )
-        elif action == "system.launch_application":
             steps.append(
                 PlanStep(
                     id="apply_pointer_action",

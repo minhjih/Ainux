@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import json
 import subprocess
+import sys
 import getpass
 import os
 import shlex
@@ -12,12 +15,26 @@ import tempfile
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import ModuleType
 from typing import Dict, Iterable, List, Mapping, MutableMapping, Optional, Protocol, Tuple
 
 try:  # pragma: no cover - optional runtime dependency
     import pyautogui  # type: ignore
 except Exception:  # pragma: no cover - defensive fallback
     pyautogui = None
+
+
+def _load_pyautogui() -> Optional[ModuleType]:
+    """Attempt to import ``pyautogui`` at runtime."""
+
+    global pyautogui
+    if pyautogui is not None:
+        return pyautogui
+    try:  # pragma: no cover - runtime import guard
+        pyautogui = importlib.import_module("pyautogui")
+    except Exception:
+        pyautogui = None
+    return pyautogui
 
 from .low_level import prepare_low_level_parameters
 from .models import ExecutionResult, PlanStep
@@ -700,6 +717,113 @@ class BlueprintCapability:
 
 
 @dataclass
+class PythonPackageInstallerCapability:
+    """Ensure a Python package is installed via ``pip``."""
+
+    name: str = "system.ensure_python_package"
+
+    def execute(self, step: PlanStep, context: Optional[Dict[str, object]] = None) -> ExecutionResult:
+        params = step.parameters or {}
+        package = str(params.get("package") or "").strip()
+        module_name = str(params.get("module") or package).strip()
+
+        if not package:
+            return ExecutionResult(
+                step_id=step.id,
+                status="error",
+                error="No package specified",
+            )
+
+        def _module_available(name: str) -> bool:
+            if not name:
+                return False
+            try:
+                return importlib.util.find_spec(name) is not None
+            except Exception:  # pragma: no cover - defensive guard
+                return False
+
+        if module_name and _module_available(module_name):
+            return ExecutionResult(
+                step_id=step.id,
+                status="success",
+                output=f"Python module '{module_name}' already available",
+            )
+
+        command_param = params.get("command")
+        if isinstance(command_param, str):
+            command = shlex.split(command_param)
+        elif isinstance(command_param, (list, tuple)):
+            command = [str(part) for part in command_param]
+        elif command_param is None:
+            command = [sys.executable, "-m", "pip", "install", package]
+            extra_args = params.get("extra_args")
+            if isinstance(extra_args, str):
+                command.extend(shlex.split(extra_args))
+            elif isinstance(extra_args, (list, tuple)):
+                command.extend(str(arg) for arg in extra_args)
+        else:
+            return ExecutionResult(
+                step_id=step.id,
+                status="error",
+                error="Invalid command specification",
+            )
+
+        env = os.environ.copy()
+        index_url = params.get("index_url")
+        if isinstance(index_url, str) and index_url.strip():
+            env["PIP_INDEX_URL"] = index_url.strip()
+
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                check=False,
+                text=True,
+                env=env,
+            )
+        except FileNotFoundError:
+            return ExecutionResult(
+                step_id=step.id,
+                status="error",
+                error="Package installer command not found",
+            )
+
+        output = completed.stdout.strip() or None
+        error_output = completed.stderr.strip() or None
+
+        import_succeeded = False
+        if completed.returncode == 0 and module_name:
+            try:
+                importlib.invalidate_caches()
+                module = importlib.import_module(module_name)
+                if module_name == "pyautogui":
+                    global pyautogui
+                    pyautogui = module
+                import_succeeded = True
+            except Exception as exc:  # pragma: no cover - runtime guard
+                error_output = str(exc)
+
+        status = "success" if completed.returncode == 0 else "error"
+
+        if status == "success" and module_name:
+            if import_succeeded or _module_available(module_name):
+                status = "success"
+            else:
+                status = "error"
+                if not error_output:
+                    error_output = (
+                        f"Installed '{package}' but module '{module_name}' is still unavailable"
+                    )
+
+        return ExecutionResult(
+            step_id=step.id,
+            status=status,
+            output=output,
+            error=error_output,
+        )
+
+
+@dataclass
 class PointerControlCapability:
     """Capability that executes pointer automation actions."""
 
@@ -709,7 +833,8 @@ class PointerControlCapability:
         params = step.parameters or {}
         operation = str(params.get("operation") or "move")
 
-        if pyautogui is None:
+        module = _load_pyautogui()
+        if module is None:
             return ExecutionResult(
                 step_id=step.id,
                 status="blocked",
@@ -721,15 +846,15 @@ class PointerControlCapability:
                 dx = int(params.get("dx") or 0)
                 dy = int(params.get("dy") or 0)
                 duration = float(params.get("duration") or 0.0)
-                pyautogui.FAILSAFE = False
-                pyautogui.moveRel(dx, dy, duration=max(duration, 0.0))
+                module.FAILSAFE = False
+                module.moveRel(dx, dy, duration=max(duration, 0.0))
                 output = f"moved pointer by ({dx}, {dy})"
             elif operation == "click":
                 button = str(params.get("button") or "left")
                 clicks = int(params.get("clicks") or 1)
                 interval = float(params.get("interval") or 0.0)
-                pyautogui.FAILSAFE = False
-                pyautogui.click(button=button, clicks=max(clicks, 1), interval=max(interval, 0.0))
+                module.FAILSAFE = False
+                module.click(button=button, clicks=max(clicks, 1), interval=max(interval, 0.0))
                 output = f"clicked {button} x{clicks}"
             else:
                 return ExecutionResult(
