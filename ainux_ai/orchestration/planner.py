@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import re
+import shutil
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
@@ -204,6 +207,7 @@ class Planner:
                     depends_on=["ensure_pointer_dependencies"],
                 )
             )
+        elif action == "system.launch_application":
             steps.append(
                 PlanStep(
                     id="apply_pointer_action",
